@@ -29,6 +29,7 @@ turn it into something more capable.
 - [Background](#background)
 - [Architecture](#architecture)
 - [The agents](#the-agents)
+- [Configuring the agents and the system](#configuring-the-agents-and-the-system)
 - [Kafka topics and schemas](#kafka-topics-and-schemas)
 - [How a request flows through the system](#how-a-request-flows-through-the-system)
 - [Which LLMs it uses, and why](#which-llms-it-uses-and-why)
@@ -129,6 +130,31 @@ back for another pass. The Auditor is tuned to approve workable research on the
 first pass, so the loop is a safety valve rather than the normal path. Once the
 research passes review, or `counter` reaches `MAX_RESEARCH_ITERATIONS` (2), it
 moves on to the Scribe.
+
+## Configuring the agents and the system
+
+**Agent personas and prompts live in YAML, not in code.** Each agent reads a
+`config.yaml` next to its source, so you can retune an agent — its role, goal,
+backstory, task instructions, expected output, and iteration/time caps (and, for
+the Auditor, the exact verdict tokens it must emit) — without touching Python:
+
+- [`agents/market_research/config.yaml`](agents/market_research/config.yaml) — Scout
+- [`agents/validator/config.yaml`](agents/validator/config.yaml) — Auditor
+- [`agents/report_creator/config.yaml`](agents/report_creator/config.yaml) — Scribe
+
+Where the YAML has `{placeholders}`, `crew.py` fills them at runtime: `{field}`
+and `{process}` from the request, the `{findings}`/`{references}` passed between
+agents, and `{extra}` (the Auditor's feedback on a re-research pass).
+
+**System-wide settings live in [`common/settings.py`](common/settings.py).** This
+is the single place that defines the knobs shared by every service: the Kafka
+topic names, the service endpoints (broker, Schema Registry, MCP server, SearXNG)
+with container-friendly defaults, the per-agent Bedrock model defaults
+(`BEDROCK_MODEL_*`), the validation-loop cap (`MAX_RESEARCH_ITERATIONS`), and the
+list of suggested sources injected into Scout's prompt. If you want to point at a
+different broker, swap a model, or rename a topic, this is the file to read first.
+Most values can also be overridden by an environment variable set in `.env` or
+`docker-compose.yml`, so you rarely need to edit the file itself.
 
 ## Kafka topics and schemas
 
@@ -330,8 +356,8 @@ of the system carries on as before.
 ├── scripts/register_schemas.sh Registers the schemas with the Schema Registry
 ├── mcp_server/                 MCP server exposing a web_search tool over SearXNG
 ├── searxng/settings.yml        SearXNG configuration (JSON API enabled)
-├── agents/
-│   ├── market_research/        Scout   (request → research)
+├── agents/                     One folder per agent (main.py, crew.py, config.yaml, Dockerfile)
+│   ├── market_research/        Scout   (request → research)   — persona in config.yaml
 │   ├── validator/              Auditor (research → validated, or re-request)
 │   └── report_creator/         Scribe  (validated → report)
 ├── ui/                         Flask + SSE backend, static React (CDN, no build step)
