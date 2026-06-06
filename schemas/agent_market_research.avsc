@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "namespace": "com.confluent.crewai",
+  "name": "AgentMarketResearch",
+  "doc": "Raw market-research output from the Scout agent, awaiting validation.",
+  "fields": [
+    { "name": "report_id", "type": "string" },
+    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
+    { "name": "field", "type": "string" },
+    { "name": "process", "type": "string" },
+    { "name": "counter", "type": "int", "doc": "Iteration this research belongs to." },
+    { "name": "findings", "type": "string", "doc": "Structured markdown research covering latest improvements, leaders, new entrants and VC investment." },
+    { "name": "references", "type": { "type": "array", "items": "string" }, "default": [], "doc": "Source URLs backing the findings." }
+  ]
+}

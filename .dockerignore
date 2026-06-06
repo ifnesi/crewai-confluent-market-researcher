@@ -1,0 +1,10 @@
+# Keep build contexts small/clean (agent + UI builds use the repo root).
+.git
+.env
+.env_example
+vol/
+samples/
+**/__pycache__/
+*.pyc
+.DS_Store
+README.md

@@ -1,0 +1,23 @@
+# SearXNG configuration for the CrewAI demo.
+# Overrides the image defaults (use_default_settings: true) with just what the
+# MCP server needs: the JSON output format (off by default) and the API limiter
+# disabled so server-to-server calls aren't rate-limited as "bots".
+use_default_settings: true
+
+general:
+  instance_name: "CrewAI Research Search"
+  debug: false
+
+server:
+  # Demo-only secret. Generate a real one for anything beyond local use:
+  #   openssl rand -hex 32
+  secret_key: "crewai-kafka-demo-change-me-0123456789abcdef"
+  limiter: false
+  image_proxy: true
+
+search:
+  safe_search: 0
+  # JSON is required for the MCP server to parse results programmatically.
+  formats:
+    - html
+    - json

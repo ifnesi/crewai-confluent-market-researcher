@@ -1,0 +1,17 @@
+# Secrets — never commit. Use .env_example as the template.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# others
+.claude
+*.txt
+# …but the dependency manifests must be tracked or the build breaks.
+!**/requirements.txt

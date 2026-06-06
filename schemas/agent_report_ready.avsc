@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "com.confluent.crewai",
+  "name": "AgentReportReady",
+  "doc": "Final C-suite report in markdown, produced by the Scribe and consumed by the UI.",
+  "fields": [
+    { "name": "report_id", "type": "string" },
+    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
+    { "name": "field", "type": "string" },
+    { "name": "process", "type": "string" },
+    { "name": "report", "type": "string", "doc": "Executive-ready report in Markdown." }
+  ]
+}

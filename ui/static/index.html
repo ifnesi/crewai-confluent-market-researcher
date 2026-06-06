@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CrewAI Research Console</title>
+    <!-- Static, no-build React via CDN (per design: REACT, no npm). -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              display: ['"Space Grotesk"', "sans-serif"],
+              sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      html, body, #root { height: 100%; }
+      body {
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        background-color: #070b16;
+        background-image:
+          radial-gradient(60rem 60rem at 12% -10%, rgba(34, 211, 238, 0.16), transparent 60%),
+          radial-gradient(50rem 50rem at 110% 10%, rgba(167, 139, 250, 0.18), transparent 55%),
+          radial-gradient(40rem 40rem at 50% 120%, rgba(56, 189, 248, 0.10), transparent 60%);
+        background-attachment: fixed;
+      }
+      .font-display { font-family: "Space Grotesk", sans-serif; }
+      .accent-text {
+        background: linear-gradient(90deg, #22d3ee, #818cf8 55%, #c084fc);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
+      .accent-bg { background-image: linear-gradient(90deg, #06b6d4, #6366f1 60%, #a855f7); }
+      .glass { background: rgba(255,255,255,0.045); backdrop-filter: blur(16px);
+               border: 1px solid rgba(255,255,255,0.10); }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 9999px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+
+      /* Executive report rendered as a light "document" on the dark desk */
+      .prose-report { color: #1e293b; }
+      .prose-report h1 { font-family: "Space Grotesk", sans-serif; font-size: 1.7rem; font-weight: 700; margin: 0.2rem 0 0.8rem; color: #0f172a; }
+      .prose-report h2 { font-family: "Space Grotesk", sans-serif; font-size: 1.18rem; font-weight: 700; margin: 1.3rem 0 0.5rem; color: #4338ca; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.2rem; }
+      .prose-report h3 { font-weight: 700; margin: 0.8rem 0 0.3rem; color: #334155; }
+      .prose-report ul { list-style: disc; margin: 0.4rem 0 0.4rem 1.3rem; }
+      .prose-report ol { list-style: decimal; margin: 0.4rem 0 0.4rem 1.3rem; }
+      .prose-report li { margin: 0.2rem 0; }
+      .prose-report a { color: #0891b2; text-decoration: underline; word-break: break-word; }
+      .prose-report p { margin: 0.5rem 0; line-height: 1.6; }
+      .prose-report strong { color: #0f172a; }
+      .prose-report code { background: #f1f5f9; padding: 0 0.3rem; border-radius: 4px; font-size: 0.9em; }
+      .prose-report hr { border-color: #e2e8f0; margin: 1rem 0; }
+    </style>
+  </head>
+  <body class="text-slate-200">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect, useRef, useCallback } = React;
+      const LOGOS = [
+        { src: "/static/img/crewai_logo.png", alt: "CrewAI" },
+        { src: "/static/img/apache_kafka_logo.png", alt: "Apache Kafka" },
+        { src: "/static/img/confluent_ogo.png", alt: "Confluent" },
+      ];
+      const MIN_CHARS = 5;
+      const USERNAME_RE = /^[A-Za-z0-9_-]+$/;  // letters, numbers, _ and - only
+
+      function LogoStrip({ className = "", full = false }) {
+        return (
+          <div className={(full ? "w-full justify-between " : "justify-center ") +
+            "flex items-center gap-3 rounded-2xl bg-white/95 px-5 py-3 shadow-lg " + className}>
+            {LOGOS.map((l) => (
+              <img key={l.alt} src={l.src} alt={l.alt} title={l.alt}
+                className={"object-contain h-6 w-auto " + (full ? "max-w-[30%]" : "max-w-[60px]")} />
+            ))}
+          </div>
+        );
+      }
+
+      function Login({ onLogin }) {
+        const [name, setName] = useState("");
+        const [err, setErr] = useState("");
+        const submit = (e) => {
+          e.preventDefault();
+          const v = name.trim();
+          if (!v) { setErr("Please enter a username."); return; }
+          if (!USERNAME_RE.test(v)) {
+            setErr("Only letters, numbers, _ and - are allowed — no spaces or symbols.");
+            return;
+          }
+          setErr("");
+          onLogin(v);
+        };
+        return (
+          <div className="min-h-full flex items-center justify-center p-6">
+            <form onSubmit={submit} className="glass rounded-3xl shadow-2xl p-10 w-full max-w-md">
+              <div className="mb-8"><LogoStrip full /></div>
+              <h1 className="font-display text-3xl font-bold text-center accent-text">CrewAI Research Console</h1>
+              <p className="text-sm text-slate-400 text-center mt-2 mb-8">
+                Choreographed multi-agent market research, streamed live over Apache Kafka.
+              </p>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-2">Username</label>
+              <input autoFocus value={name}
+                onChange={(e) => { setName(e.target.value); if (err) setErr(""); }}
+                className={"w-full bg-white/5 border rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-cyan-400/60 focus:border-transparent outline-none transition " +
+                  (err ? "border-red-400/70" : "border-white/15")}
+                placeholder="e.g. clarice" />
+              {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
+              <button type="submit"
+                className="mt-7 w-full accent-bg text-white font-semibold py-3 rounded-xl shadow-lg shadow-indigo-500/20 hover:brightness-110 active:scale-[.99] transition">
+                Login
+              </button>
+            </form>
+          </div>
+        );
+      }
+
+      // Friendly, abstracted activity per agent — the UI never shows raw
+      // prompts, tool I/O, model ids or Kafka topics.
+      const AGENT_META = {
+        "scout-market-research": { label: "Scout", doing: "Researching the market" },
+        "auditor-validator":     { label: "Auditor", doing: "Validating the research" },
+        "scribe-report-creator": { label: "Scribe", doing: "Writing the report" },
+      };
+
+      function LogEntry({ log }) {
+        const meta = AGENT_META[log.agent_name] || { label: log.agent_name, doing: "Working" };
+        const isInput = log.type === "input";
+        const t = new Date(log.timestamp).toLocaleTimeString();
+        return (
+          <div className="flex items-center gap-2 py-1.5 border-b border-white/5 text-xs">
+            <span title={isInput ? "asking the LLM" : "reading the reply"}
+              className={"shrink-0 cursor-default font-bold w-3 text-center " + (isInput ? "text-sky-400" : "text-emerald-400")}>
+              {isInput ? "↑" : "↓"}
+            </span>
+            <span className="font-semibold text-cyan-300 shrink-0">{meta.label}</span>
+            <span className="text-slate-300 truncate">{meta.doing}</span>
+            {log.tokens != null &&
+              <span className="ml-auto shrink-0 text-slate-500">{Number(log.tokens).toLocaleString()} tok</span>}
+            <span className="shrink-0 text-slate-600 tabular-nums">{t}</span>
+          </div>
+        );
+      }
+
+      function App() {
+        const [username, setUsername] = useState(null);
+        const [fields, setFields] = useState([]);
+        const [field, setField] = useState("");          // "" => placeholder
+        const [process, setProcess] = useState("");
+        const [logs, setLogs] = useState([]);
+        const [report, setReport] = useState("");
+        const [reportMeta, setReportMeta] = useState(null);
+        const [status, setStatus] = useState("idle");
+        const [tokIn, setTokIn] = useState(0);
+        const [tokOut, setTokOut] = useState(0);
+        const reportIdRef = useRef(null);
+        const logsEndRef = useRef(null);
+
+        useEffect(() => {
+          fetch("/api/session").then((r) => r.json()).then((d) => {
+            setUsername(d.username);
+            setFields(d.fields || []);
+          });
+        }, []);
+
+        useEffect(() => {
+          if (!username) return;
+          setTokIn(0); setTokOut(0);   // per-user session totals, reset on login
+          const es = new EventSource("/api/stream");
+          es.onmessage = (ev) => {
+            const msg = JSON.parse(ev.data);
+            const v = msg.value;
+            // Token totals count every log for this user (the stream is already
+            // scoped to the logged-in user via the Kafka key).
+            if (msg.kind === "log" && v.tokens != null) {
+              if (v.type === "input") setTokIn((n) => n + Number(v.tokens));
+              else if (v.type === "output") setTokOut((n) => n + Number(v.tokens));
+            }
+            // The activity feed and report stay scoped to the active request.
+            if (v.report_id !== reportIdRef.current) return;
+            if (msg.kind === "log") setLogs((p) => [...p, v]);
+            else if (msg.kind === "report") {
+              setReport(v.report);
+              setReportMeta({ field: v.field, process: v.process, report_id: v.report_id });
+              setStatus("ready");
+            }
+          };
+          es.onerror = () => {};
+          return () => es.close();
+        }, [username]);
+
+        useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
+
+        const login = (name) =>
+          fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: name }) }).then((r) => r.json()).then((d) => setUsername(d.username));
+
+        const logout = () =>
+          fetch("/api/logout", { method: "POST" }).then(() => { setUsername(null); reportIdRef.current = null; });
+
+        const chars = process.trim().length;
+        const canSubmit = !!field && chars >= MIN_CHARS && status !== "working";
+
+        const submit = useCallback(() => {
+          if (!field || process.trim().length < MIN_CHARS) return;
+          setLogs([]); setReport(""); setReportMeta(null); setStatus("working");
+          fetch("/api/request", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ field, process }) })
+            .then((r) => r.json()).then((d) => { reportIdRef.current = d.report_id; });
+        }, [field, process, status]);
+
+        const clearForm = () => { setField(""); setProcess(""); };
+
+        const downloadReport = () => {
+          const rid = (reportMeta && reportMeta.report_id) || reportIdRef.current || "report";
+          const blob = new Blob([report], { type: "text/markdown;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = `${username}_${rid}.md`;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        };
+
+        if (!username) return <Login onLogin={login} />;
+
+        const reportHtml = report ? DOMPurify.sanitize(marked.parse(report)) : "";
+
+        return (
+          <div className="h-screen flex flex-col">
+            {/* header */}
+            <header className="shrink-0 glass border-x-0 border-t-0 px-6 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="font-display font-bold text-lg accent-text">CrewAI Research Console</span>
+                <LogoStrip className="hidden md:flex !py-1.5 !px-4 scale-90 origin-left" />
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="hidden sm:flex items-center gap-2 text-xs" title="Tokens used this session">
+                  <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
+                    <span className="text-slate-500">↑ in</span>{" "}
+                    <b className="text-cyan-300">{tokIn.toLocaleString()}</b>{" "}
+                    <span className="text-slate-500">tok</span>
+                  </span>
+                  <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
+                    <span className="text-slate-500">↓ out</span>{" "}
+                    <b className="text-emerald-300">{tokOut.toLocaleString()}</b>{" "}
+                    <span className="text-slate-500">tok</span>
+                  </span>
+                </div>
+                <span className="text-sm text-slate-300">
+                  <span className="text-slate-500">signed in&nbsp;·&nbsp;</span>
+                  <b className="text-cyan-300">{username}</b>
+                </span>
+                <button onClick={logout}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10 hover:border-white/25 transition">
+                  <span>Log out</span><span aria-hidden>⏻</span>
+                </button>
+              </div>
+            </header>
+
+            {/* main */}
+            <main className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 lg:p-6">
+              {/* left column */}
+              <section className="lg:col-span-1 flex flex-col gap-4 min-h-0">
+                {/* request form */}
+                <div className="glass rounded-2xl p-5 shrink-0">
+                  <h2 className="font-display font-semibold mb-4 text-slate-100">New research request</h2>
+
+                  <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1.5">Field</label>
+                  <select value={field} onChange={(e) => setField(e.target.value)}
+                    className="w-full bg-white/5 border border-white/15 rounded-xl px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-cyan-400/60 outline-none">
+                    <option value="" disabled className="bg-slate-800">— Select a field —</option>
+                    {fields.map((f) => <option key={f} value={f} className="bg-slate-800">{f}</option>)}
+                  </select>
+                  {!field && <p className="mt-1.5 text-[11px] text-red-400">Select a field</p>}
+
+                  <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1.5 mt-4">Process</label>
+                  <textarea value={process} onChange={(e) => setProcess(e.target.value)} rows={3}
+                    placeholder="Describe the specific process to research, e.g. procure-to-pay automation in mid-market finance"
+                    className="w-full bg-white/5 border border-white/15 rounded-xl px-3 py-2.5 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-cyan-400/60 outline-none resize-none" />
+                  {chars < MIN_CHARS && (
+                    <p className="mt-1.5 text-[11px] text-red-400">{chars}/{MIN_CHARS}+ chars</p>
+                  )}
+
+                  <div className="flex gap-2 mt-4">
+                    <button onClick={submit} disabled={!canSubmit}
+                      className="flex-1 accent-bg text-white font-semibold py-2.5 rounded-xl shadow-lg shadow-indigo-500/20 enabled:hover:brightness-110 active:scale-[.99] transition disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none">
+                      {status === "working"
+                        ? <span className="inline-flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-white animate-ping" />Researching…</span>
+                        : "Submit"}
+                    </button>
+                    <button onClick={clearForm}
+                      className="px-4 rounded-xl border border-white/15 bg-white/5 text-slate-200 hover:bg-white/10 transition">
+                      Clear
+                    </button>
+                  </div>
+                  {reportIdRef.current && (
+                    <p className="text-[11px] text-slate-500 mt-3">report · {reportIdRef.current.slice(0, 8)}</p>
+                  )}
+                </div>
+
+                {/* agent activity — fills remaining height */}
+                <div className="glass rounded-2xl p-4 flex-1 min-h-0 flex flex-col">
+                  <h2 className="font-display font-semibold mb-3 text-slate-100 shrink-0 flex items-center gap-2">
+                    Agent activity
+                    {status === "working" && <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  </h2>
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+                    {logs.length === 0
+                      ? <p className="text-xs text-slate-500">Live LLM prompts &amp; responses stream here once you submit.</p>
+                      : logs.map((l, i) => <LogEntry key={i} log={l} />)}
+                    <div ref={logsEndRef} />
+                  </div>
+                </div>
+              </section>
+
+              {/* report — fills height, download button on top */}
+              <section className="lg:col-span-2 flex flex-col min-h-0">
+                <div className="glass rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden">
+                  <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-white/10">
+                    <h2 className="font-display font-semibold text-slate-100">Executive report</h2>
+                    <button onClick={downloadReport} disabled={!report}
+                      className="inline-flex items-center gap-2 rounded-lg accent-bg px-3.5 py-1.5 text-sm font-semibold text-white shadow enabled:hover:brightness-110 active:scale-[.99] transition disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none">
+                      <span aria-hidden>↓</span> Download .md
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                    {report
+                      ? <div className="prose-report max-w-none bg-white rounded-xl p-8 shadow-xl"
+                             dangerouslySetInnerHTML={{ __html: reportHtml }} />
+                      : <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 gap-3">
+                          {status === "working"
+                            ? <>
+                                <span className="h-10 w-10 rounded-full border-2 border-cyan-400/40 border-t-cyan-300 animate-spin" />
+                                <p>Scout is researching, the Auditor validating, the Scribe writing…</p>
+                              </>
+                            : <p>Your executive report will appear here once the crew finishes.</p>}
+                        </div>}
+                  </div>
+                </div>
+              </section>
+            </main>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

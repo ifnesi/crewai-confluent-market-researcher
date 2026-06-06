@@ -1,0 +1,2 @@
+flask>=3.0.0
+confluent-kafka[avro]>=2.14.2

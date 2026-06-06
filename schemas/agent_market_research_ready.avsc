@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "namespace": "com.confluent.crewai",
+  "name": "AgentMarketResearchReady",
+  "doc": "Validated research, ready for the Scribe to turn into an executive report.",
+  "fields": [
+    { "name": "report_id", "type": "string" },
+    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
+    { "name": "field", "type": "string" },
+    { "name": "process", "type": "string" },
+    { "name": "counter", "type": "int", "doc": "Iteration the validated research came from." },
+    { "name": "findings", "type": "string", "doc": "Validated markdown research." },
+    { "name": "references", "type": { "type": "array", "items": "string" }, "default": [], "doc": "Verified source URLs." },
+    { "name": "validation_notes", "type": ["null", "string"], "default": null, "doc": "Auditor's notes, including whether it passed on merit or hit the iteration cap." }
+  ]
+}
