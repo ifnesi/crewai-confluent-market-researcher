@@ -29,7 +29,7 @@ from flask import (
     session,
 )
 
-from common import settings
+from common import lifecycle, settings
 from common.kafka_io import KafkaAvro
 from common.util import new_report_id, now_ms
 
@@ -49,6 +49,9 @@ _subs_lock = threading.Lock()
 
 _producer = KafkaAvro()
 
+# Background consumer clients, tracked so graceful shutdown can stop + flush them.
+_consumers: list[KafkaAvro] = []
+
 # Field options offered in the UI dropdown.
 FIELDS = ["Technology", "Finance", "HR", "Healthcare", "Retail", "Manufacturing", "Energy", "Logistics"]
 
@@ -64,6 +67,7 @@ def _fanout(username: str | None, payload: dict) -> None:
 
 def _consume(topic: str, group_suffix: str, kind: str) -> None:
     kafka = KafkaAvro()
+    _consumers.append(kafka)
     group = f"ui-{group_suffix}-{INSTANCE}"
     log.info("UI consumer started topic=%s group=%s", topic, group)
     for key, value in kafka.iter_messages(topic, group_id=group, auto_offset_reset="latest"):
@@ -180,9 +184,20 @@ def stream():
     )
 
 
+def _shutdown() -> None:
+    """Stop background consumers and flush the request producer on exit."""
+    for kafka in _consumers:
+        try:
+            kafka.close()
+        except Exception:  # noqa: BLE001
+            log.exception("error closing UI consumer")
+    _producer.flush()
+
+
 _start_background_consumers()
 
 
 if __name__ == "__main__":
+    lifecycle.on_shutdown(_shutdown)
     # threaded=True so long-lived SSE connections don't block other requests.
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8088")), threaded=True)

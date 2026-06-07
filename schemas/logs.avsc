@@ -2,14 +2,17 @@
   "type": "record",
   "namespace": "com.confluent.crewai",
   "name": "CrewaiLog",
-  "doc": "One LLM prompt (input) or completion (output), emitted by any agent for UI feedback and observability.",
+  "doc": "One agent activity event — an LLM exchange (input/output) or an MCP tool call (tool_call/tool_result) — emitted by any agent for UI feedback and observability.",
   "fields": [
     { "name": "agent_name", "type": "string" },
     { "name": "report_id", "type": "string" },
     { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
-    { "name": "type", "type": { "type": "enum", "name": "LogType", "symbols": ["input", "output"] }, "doc": "Direction of the LLM exchange." },
-    { "name": "data", "type": "string", "doc": "The prompt text (input) or response text (output)." },
-    { "name": "tokens", "type": ["null", "int"], "default": null, "doc": "Token count from provider usage; null for input (pre-call)." },
-    { "name": "model", "type": "string", "doc": "LLM model id used." }
+    { "name": "type", "type": { "type": "enum", "name": "LogType", "symbols": ["input", "output", "tool_call", "tool_result"], "default": "output" }, "doc": "input/output = LLM prompt/completion; tool_call/tool_result = MCP tool invocation/result." },
+    { "name": "data", "type": "string", "doc": "Prompt (input), response (output), tool args (tool_call) or tool output (tool_result)." },
+    { "name": "tokens", "type": ["null", "int"], "default": null, "doc": "Headline token count for this record: completion tokens on output; null for input/tool records." },
+    { "name": "prompt_tokens", "type": ["null", "int"], "default": null, "doc": "Real input (prompt) tokens from provider usage, carried on output records." },
+    { "name": "cost", "type": ["null", "double"], "default": null, "doc": "USD cost for the LLM call from LiteLLM's price map; null when the model is not in the map." },
+    { "name": "tool_name", "type": ["null", "string"], "default": null, "doc": "Tool name on tool_call/tool_result records, e.g. web_search." },
+    { "name": "model", "type": "string", "doc": "LLM model id used (empty string for tool records)." }
   ]
 }

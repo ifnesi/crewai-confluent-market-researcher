@@ -9,6 +9,7 @@ import logging
 
 import crew as report_crew
 
+from common import lifecycle
 from common import llm as llm_factory
 from common import logging_bus, settings
 from common.kafka_io import KafkaAvro
@@ -66,6 +67,8 @@ def main() -> None:
     )
     logging_bus.install()
     kafka = KafkaAvro()
+    # On SIGTERM/SIGINT: stop the consume loop and flush both producers.
+    lifecycle.on_shutdown(kafka.close, logging_bus.shutdown)
     kafka.consume(
         settings.TOPIC_RESEARCH_READY,
         group_id=GROUP_ID,

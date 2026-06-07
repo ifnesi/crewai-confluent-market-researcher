@@ -7,6 +7,7 @@ agents and UI free of confluent-kafka boilerplate.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Callable, Iterator
 
 from confluent_kafka import Consumer, Producer
@@ -49,6 +50,10 @@ class KafkaAvro:
         )
         self._serializers: dict[str, AvroSerializer] = {}
         self._deserializers: dict[str, AvroDeserializer] = {}
+        # Set by close() to break the consume()/iter_messages() poll loops so a
+        # SIGTERM/SIGINT shuts the process down cleanly instead of being killed
+        # mid-poll. poll() returns within its timeout, so the loops notice promptly.
+        self._stop = threading.Event()
 
     # --- serialization helpers ------------------------------------------------
     def _serializer(self, topic: str) -> AvroSerializer:
@@ -84,6 +89,17 @@ class KafkaAvro:
     def flush(self, timeout: float = 10.0) -> None:
         self._producer.flush(timeout)
 
+    def close(self, timeout: float = 10.0) -> None:
+        """Stop consume loops and flush the producer (graceful shutdown).
+
+        confluent-kafka's Producer has no explicit close; flush is its cleanup —
+        it blocks until buffered messages are delivered (or the timeout). Setting
+        the stop event lets any consume()/iter_messages() loop exit so its
+        ``finally`` closes the consumer (committing offsets / leaving the group).
+        """
+        self._stop.set()
+        self._producer.flush(timeout)
+
     # --- consuming ------------------------------------------------------------
     def consume(
         self,
@@ -110,7 +126,7 @@ class KafkaAvro:
         consumer.subscribe([topic])
         log.info("consuming topic=%s group=%s", topic, group_id)
         try:
-            while True:
+            while not self._stop.is_set():
                 msg = consumer.poll(1.0)
                 if msg is None:
                     continue
@@ -150,7 +166,7 @@ class KafkaAvro:
         deser = self._deserializer(topic)
         consumer.subscribe([topic])
         try:
-            while True:
+            while not self._stop.is_set():
                 msg = consumer.poll(1.0)
                 if msg is None:
                     continue
