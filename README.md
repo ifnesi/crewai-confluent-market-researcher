@@ -3,7 +3,7 @@
   &nbsp;
   <a><img src="ui/static/img/apache_kafka_logo.png" alt="Apache Kafka" height="44" style="background:#ffffff; padding:14px 18px; border-radius:12px;" /></a>
   &nbsp;
-  <a><img src="ui/static/img/confluent_ogo.png" alt="Confluent" height="40" style="background:#ffffff; padding:16px 18px; border-radius:12px;" /></a>
+  <a><img src="ui/static/img/confluent_logo.png" alt="Confluent" height="40" style="background:#ffffff; padding:16px 18px; border-radius:12px;" /></a>
 </p>
 
 # CrewAI × Kafka — A Choreographed Deep-Research System
@@ -75,35 +75,13 @@ one machine; the same topology would move to Kubernetes and a managed broker
 
 ## Architecture
 
-```
-                ┌───────────────────────────────────────────────────────────┐
-                │                   Apache Kafka (topics)                   │
-                └───────────────────────────────────────────────────────────┘
-
-  Browser (React, SSE)
-        │  submit field + process
-        ▼
-  ┌───────────┐   crewai-ui-request-report    ┌──────────────────────┐
-  │ Flask UI  │ ────────────────────────────▶ │ Scout                │
-  │ (flask-ui)│                               │ (agent-market-       │── MCP ─▶ SearXNG ─▶ web
-  └───────────┘ ◀───── SSE: logs + report     │  research)           │
-        ▲  ▲                                  └──────────┬───────────┘
-        │  │ crewai-agent-report-ready                   │ crewai-agent-market-research
-        │  │                                             ▼
-        │  │                                    ┌──────────────────────┐
-        │  │   re-request (extra_context,       │ Auditor              │── MCP ─▶ SearXNG
-        │  │    counter+1)                      │ (agent-validator)    │   (re-verify URLs)
-        │  └──────── crewai-ui-request-report ◀─┤                      │
-        │                                       └──────────┬───────────┘
-        │                                                  │ crewai-agent-market-research-ready
-        │                                                  ▼   (valid OR counter == 2)
-        │                                       ┌────────────────────────┐
-        │            crewai-agent-report-ready  │ Scribe                 │── MCP ─▶ SearXNG
-        └───────────────────────────────────────┤ (agent-report-creator) │   (supplementary facts)
-                                                └────────────────────────┘
-
-  Every LLM prompt/response from every agent ──▶ crewai-logs ──▶ Flask UI (live feed)
-```
+<p align="center">
+  <img src="docs/imgs/comms_diagram_via_kafka.png" alt="High-level components communicating through Kafka" width="820" />
+  <br/>
+  <em>High-level view: the React/Flask UI and the three CrewAI agents (Scout, Auditor, Scribe)
+  are fully decoupled — they exchange nothing directly, only messages on Confluent/Kafka topics.
+  All three agents reach the live web through the MCP server's <code>web_search</code> tool, backed by SearXNG.</em>
+</p>
 
 The only control flow is "consume a topic, act, produce to a topic." No agent
 imports or invokes another.
@@ -169,11 +147,17 @@ files are in [`schemas/`](schemas/).
 | `crewai-agent-market-research` | `agent_market_research.avsc` | Scout |
 | `crewai-agent-market-research-ready` | `agent_market_research_ready.avsc` | Auditor |
 | `crewai-agent-report-ready` | `agent_report_ready.avsc` | Scribe |
-| `crewai-logs` | `logs.avsc` | every agent (one message per LLM prompt and response) |
+| `crewai-logs` | `logs.avsc` | every agent (one message per LLM prompt, LLM response, and MCP tool call) |
 
 `start_demo.sh` creates the topics (one partition each) and registers the schemas
 before any traffic flows, so they appear in Control Center immediately. Producers
 also auto-register their schema on first publish.
+
+<p align="center">
+  <img src="docs/imgs/kafka_topics.png" alt="The project's Kafka topics in Confluent Control Center" width="820" />
+  <br/>
+  <em>The five project topics in Confluent Control Center — one partition each (internal topics hidden).</em>
+</p>
 
 ## How a request flows through the system
 
@@ -194,11 +178,22 @@ also auto-register their schema on first publish.
    (the username) and pushes them to the browser over Server-Sent Events, so the
    user sees a live activity feed and then the finished report.
 
+<p align="center">
+  <img src="docs/imgs/webui_agents_kafka_topics.png" alt="Topic-level message flow between the UI and the three agents" width="840" />
+  <br/>
+  <em>The same flow at the topic level. Solid arrows are produces (blue) and consumes (orange) between
+  agents and topics; the dashed lines are the bounded re-research loop (Auditor → <code>crewai-ui-request-report</code>)
+  and every agent streaming its activity to <code>crewai-logs</code>, which the UI tails for the live feed.
+  No agent calls another — each only reads one topic and writes another.</em>
+</p>
+
 ## Which LLMs it uses, and why
 
 The agents run on Anthropic's Claude models hosted on Amazon Bedrock. CrewAI 1.x
-talks to Bedrock through its native provider (boto3); no LiteLLM is involved. The
-model is chosen per agent to match the work and balance cost against quality.
+talks to Bedrock through its native provider (boto3); the LiteLLM runtime is not
+involved (only its public price map is read, for cost estimates — see
+[Observability](#observability)). The model is chosen per agent to match the work
+and balance cost against quality.
 
 | Agent | Default model | Reasoning |
 |---|---|---|
@@ -286,6 +281,13 @@ and pulls the Confluent stack, so it takes a few minutes.
 
 ## Using the web UI
 
+<p align="center">
+  <img src="docs/imgs/webui_login.png" alt="The username-only login screen" width="720" />
+  <br/>
+  <em>Username-only login (no password). The username opens a session and becomes the Kafka
+  message key, which scopes the live feed and report to you.</em>
+</p>
+
 1. Open http://localhost:8088 and log in with any username. There is no password;
    the username creates a session and becomes the Kafka message key.
 2. Choose a field from the dropdown and describe the process in the text box (for
@@ -293,13 +295,22 @@ and pulls the Confluent stack, so it takes a few minutes.
    Submit stays disabled until a field is selected and the process has at least a
    few characters.
 3. Click Submit. Use Clear to reset the form.
-4. Watch the Agent activity panel: every LLM prompt and response from Scout,
-   Auditor, and Scribe streams in live from `crewai-logs`.
+4. Watch the Agent activity panel: every LLM prompt and response — and every MCP
+   web-search call — from Scout, Auditor, and Scribe streams in live from
+   `crewai-logs`. Each line shows the agent, what it's doing, the call's token
+   count and estimated cost; the header keeps running session token and cost totals.
 5. When the Scribe finishes, the report renders on the right. Use the Download
    button to save it as Markdown.
 
 A full run takes a few minutes — it includes real web research, validation, a
 possible re-research loop, and writing.
+
+<p align="center">
+  <img src="docs/imgs/webui_main.png" alt="The research console during a run" width="840" />
+  <br/>
+  <em>The console mid-run: the request form and the live agent-activity feed on the left, the
+  streamed executive report on the right, and session token/cost totals in the header.</em>
+</p>
 
 ## Stopping it
 
@@ -308,19 +319,37 @@ possible re-research loop, and writing.
 ./stop_demo.sh --volumes   # also remove volumes for a clean slate
 ```
 
+Stopping sends each container SIGTERM. The agents and the UI catch it and shut down
+gracefully — they stop their Kafka consumers cleanly (committing offsets, leaving the
+group) and flush any pending producer messages before exiting, so no in-flight log or
+report is lost. The handling lives in [`common/lifecycle.py`](common/lifecycle.py).
+
 ## Observability
 
-- **In the UI:** the activity feed shows every LLM input and output, with the
-  model name and token counts, read from `crewai-logs`.
+- **In the UI:** the activity feed shows every agent action — LLM prompts and
+  responses *and* MCP tool calls — read from `crewai-logs`, with per-call token
+  counts and an estimated USD cost, plus running session totals in the header.
 - **In Control Center** (http://localhost:9021): topics, message flow, consumer
   groups, and the registered Avro schemas.
 - **In the container logs:**
   `docker compose logs -f agent-market-research agent-validator agent-report-creator`.
 
 The log feed is produced by a listener on CrewAI's event bus
-([`common/logging_bus.py`](common/logging_bus.py)). It captures every LLM call —
-prompt, response, model, and token usage — and publishes it to `crewai-logs`,
-tagged with the agent name, `report_id`, and username.
+([`common/logging_bus.py`](common/logging_bus.py)). It captures every LLM call
+(prompt, response, model, real token usage) and every MCP tool call (name,
+arguments, result), and publishes each to `crewai-logs`, tagged with the agent
+name, `report_id`, and username. Token counts come from the provider's actual
+usage rather than an estimate. The USD cost is derived from LiteLLM's maintained
+public price map — the same one CrewAI references — so no prices are hardcoded;
+a model not yet in the map simply shows as `n/a` ([`common/pricing.py`](common/pricing.py)).
+
+<p align="center">
+  <img src="docs/imgs/kafka_topic_crewai-logs.png" alt="Inspecting the crewai-logs topic in Control Center" width="840" />
+  <br/>
+  <em>Inspecting <code>crewai-logs</code> in Control Center: each message is one agent action keyed by
+  username, with the Avro value (<code>agent_name</code>, <code>report_id</code>, <code>type</code>, <code>tokens</code>,
+  <code>cost</code>, <code>model</code>) shown in the message detail.</em>
+</p>
 
 ## Extend it
 
@@ -351,8 +380,9 @@ of the system carries on as before.
 
 ```
 .
-├── common/                     Shared library (settings, Kafka+Avro, Bedrock LLM, MCP, logging)
+├── common/                     Shared library (settings, Kafka+Avro, Bedrock LLM, MCP, logging, pricing, lifecycle)
 ├── schemas/                    Avro value schemas, one per topic
+├── docs/imgs/                  Screenshots and diagrams used in this README
 ├── scripts/register_schemas.sh Registers the schemas with the Schema Registry
 ├── mcp_server/                 MCP server exposing a web_search tool over SearXNG
 ├── searxng/settings.yml        SearXNG configuration (JSON API enabled)

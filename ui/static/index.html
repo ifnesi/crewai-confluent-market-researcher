@@ -75,7 +75,7 @@
       const LOGOS = [
         { src: "/static/img/crewai_logo.png", alt: "CrewAI" },
         { src: "/static/img/apache_kafka_logo.png", alt: "Apache Kafka" },
-        { src: "/static/img/confluent_ogo.png", alt: "Confluent" },
+        { src: "/static/img/confluent_logo.png", alt: "Confluent" },
       ];
       const MIN_CHARS = 5;
       const USERNAME_RE = /^[A-Za-z0-9_-]+$/;  // letters, numbers, _ and - only
@@ -130,28 +130,48 @@
         );
       }
 
-      // Friendly, abstracted activity per agent — the UI never shows raw
-      // prompts, tool I/O, model ids or Kafka topics.
+      // Friendly, abstracted activity per agent — the UI shows what each agent is
+      // doing (asking the LLM, reading the reply, calling an MCP tool) without
+      // dumping raw prompts, full tool payloads, model ids or Kafka topics.
       const AGENT_META = {
         "scout-market-research": { label: "Scout", doing: "Researching the market" },
         "auditor-validator":     { label: "Auditor", doing: "Validating the research" },
         "scribe-report-creator": { label: "Scribe", doing: "Writing the report" },
       };
 
+      // Per log type: glyph, colour, hover title and the activity verb shown.
+      function logVisual(log, agentDoing) {
+        const tool = log.tool_name || "tool";
+        switch (log.type) {
+          case "input":
+            return { icon: "↑", cls: "text-sky-400", title: "asking the LLM", doing: agentDoing };
+          case "tool_call":
+            return { icon: "🔌", cls: "text-fuchsia-400", title: "calling an MCP tool", doing: `${tool} via MCP` };
+          case "tool_result":
+            return { icon: "🔌", cls: "text-amber-400", title: "MCP tool result", doing: `${tool} via MCP · result` };
+          default: // output
+            return { icon: "↓", cls: "text-emerald-400", title: "reading the reply", doing: agentDoing };
+        }
+      }
+
       function LogEntry({ log }) {
         const meta = AGENT_META[log.agent_name] || { label: log.agent_name, doing: "Working" };
-        const isInput = log.type === "input";
+        const v = logVisual(log, meta.doing);
         const t = new Date(log.timestamp).toLocaleTimeString();
+        // Output records carry real input + output tokens; show their sum.
+        const tokTotal = log.type === "output" && (log.prompt_tokens != null || log.tokens != null)
+          ? (Number(log.prompt_tokens) || 0) + (Number(log.tokens) || 0)
+          : null;
+        const tokLabel = tokTotal != null ? `${tokTotal.toLocaleString()} tok` : null;
         return (
           <div className="flex items-center gap-2 py-1.5 border-b border-white/5 text-xs">
-            <span title={isInput ? "asking the LLM" : "reading the reply"}
-              className={"shrink-0 cursor-default font-bold w-3 text-center " + (isInput ? "text-sky-400" : "text-emerald-400")}>
-              {isInput ? "↑" : "↓"}
+            <span title={v.title} className={"shrink-0 cursor-default font-bold w-4 text-center " + v.cls}>
+              {v.icon}
             </span>
             <span className="font-semibold text-cyan-300 shrink-0">{meta.label}</span>
-            <span className="text-slate-300 truncate">{meta.doing}</span>
-            {log.tokens != null &&
-              <span className="ml-auto shrink-0 text-slate-500">{Number(log.tokens).toLocaleString()} tok</span>}
+            <span className="flex-1 min-w-0 truncate text-slate-300">{v.doing}</span>
+            {tokLabel && <span className="shrink-0 text-slate-500">{tokLabel}</span>}
+            {log.cost != null && <span className="shrink-0 text-emerald-500/80">${Number(log.cost).toFixed(4)}</span>}
             <span className="shrink-0 text-slate-600 tabular-nums">{t}</span>
           </div>
         );
@@ -168,6 +188,8 @@
         const [status, setStatus] = useState("idle");
         const [tokIn, setTokIn] = useState(0);
         const [tokOut, setTokOut] = useState(0);
+        const [cost, setCost] = useState(0);
+        const [hasCost, setHasCost] = useState(false);
         const reportIdRef = useRef(null);
         const logsEndRef = useRef(null);
 
@@ -180,16 +202,18 @@
 
         useEffect(() => {
           if (!username) return;
-          setTokIn(0); setTokOut(0);   // per-user session totals, reset on login
+          setTokIn(0); setTokOut(0); setCost(0); setHasCost(false);  // session totals, reset on login
           const es = new EventSource("/api/stream");
           es.onmessage = (ev) => {
             const msg = JSON.parse(ev.data);
             const v = msg.value;
-            // Token totals count every log for this user (the stream is already
-            // scoped to the logged-in user via the Kafka key).
-            if (msg.kind === "log" && v.tokens != null) {
-              if (v.type === "input") setTokIn((n) => n + Number(v.tokens));
-              else if (v.type === "output") setTokOut((n) => n + Number(v.tokens));
+            // Precise totals: output records carry the provider's real input
+            // (prompt_tokens) and output (tokens) counts plus LiteLLM cost. The
+            // stream is already scoped to the logged-in user via the Kafka key.
+            if (msg.kind === "log" && v.type === "output") {
+              if (v.prompt_tokens != null) setTokIn((n) => n + Number(v.prompt_tokens));
+              if (v.tokens != null) setTokOut((n) => n + Number(v.tokens));
+              if (v.cost != null) { setCost((c) => c + Number(v.cost)); setHasCost(true); }
             }
             // The activity feed and report stay scoped to the active request.
             if (v.report_id !== reportIdRef.current) return;
@@ -251,14 +275,13 @@
               <div className="flex items-center gap-3">
                 <div className="hidden sm:flex items-center gap-2 text-xs" title="Tokens used this session">
                   <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
-                    <span className="text-slate-500">↑ in</span>{" "}
-                    <b className="text-cyan-300">{tokIn.toLocaleString()}</b>{" "}
-                    <span className="text-slate-500">tok</span>
+                    <b className="text-cyan-300">{(tokIn + tokOut).toLocaleString()}</b>{" "}
+                    <span className="text-slate-500">tokens</span>
                   </span>
-                  <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
-                    <span className="text-slate-500">↓ out</span>{" "}
-                    <b className="text-emerald-300">{tokOut.toLocaleString()}</b>{" "}
-                    <span className="text-slate-500">tok</span>
+                  <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1"
+                    title={hasCost ? "Estimated Bedrock cost (LiteLLM price map)" : "Cost unavailable — model not in LiteLLM's price map yet"}>
+                    <span className="text-slate-500">$ cost</span>{" "}
+                    <b className="text-fuchsia-300">{hasCost ? "$" + cost.toFixed(4) : "n/a"}</b>
                   </span>
                 </div>
                 <span className="text-sm text-slate-300">
