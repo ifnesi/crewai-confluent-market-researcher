@@ -1,0 +1,15 @@
+{
+    "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+    "connection.url": "http://elasticsearch:9200",
+    "topics": "crewai-logs-stats",
+    "key.ignore": "true",
+    "schema.ignore": "true",
+    "behavior.on.null.values": "IGNORE",
+    "behavior.on.malformed.documents": "IGNORE",
+    "drop.invalid.message": "true",
+    "write.method": "INSERT",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    "tasks.max": "1"
+}

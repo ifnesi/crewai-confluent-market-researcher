@@ -6,8 +6,8 @@
   "fields": [
     { "name": "agent_name", "type": "string" },
     { "name": "report_id", "type": "string" },
-    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
-    { "name": "type", "type": { "type": "enum", "name": "LogType", "symbols": ["input", "output", "tool_call", "tool_result"], "default": "output" }, "doc": "input/output = LLM prompt/completion; tool_call/tool_result = MCP tool invocation/result." },
+    {"name": "timestamp", "type": { "type": "long", "logicalType": "timestamp-millis" } },
+    { "name": "type", "type": "string", "default": "output", "doc": "input/output = LLM prompt/completion; tool_call/tool_result = MCP tool invocation/result. Plain string (not an Avro enum) so Flink's avro-confluent format can resolve it into a STRING column." },
     { "name": "data", "type": "string", "doc": "Prompt (input), response (output), tool args (tool_call) or tool output (tool_result)." },
     { "name": "tokens", "type": ["null", "int"], "default": null, "doc": "Headline token count for this record: completion tokens on output; null for input/tool records." },
     { "name": "prompt_tokens", "type": ["null", "int"], "default": null, "doc": "Real input (prompt) tokens from provider usage, carried on output records." },

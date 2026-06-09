@@ -1,0 +1,23 @@
+{
+  "index_patterns": ["crewai-logs-stats*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "properties": {
+        "timestamp":     { "type": "date" },
+        "agent_name":    { "type": "keyword" },
+        "report_id":     { "type": "keyword" },
+        "type":          { "type": "keyword" },
+        "tool_name":     { "type": "keyword" },
+        "model":         { "type": "keyword" },
+        "tokens":        { "type": "integer" },
+        "prompt_tokens": { "type": "integer" },
+        "cost":          { "type": "double" },
+        "latency_ms":    { "type": "long" }
+      }
+    }
+  }
+}

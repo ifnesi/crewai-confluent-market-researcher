@@ -61,6 +61,43 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
 
+  connect:
+    image: cnfldemos/cp-server-connect-datagen:${CP_DATAGEN}
+    hostname: connect
+    container_name: connect
+    depends_on:
+      - broker
+      - schema-registry
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      # CLASSPATH required due to CC-2422
+      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-8.2.0.jar
+      CONNECT_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
+      CONNECT_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+    command: 
+      - bash 
+      - -c 
+      - |
+        echo "Installing Connector"
+        confluent-hub install --no-prompt confluentinc/kafka-connect-elasticsearch:${CP_ELASTIC_SINK_VERSION}
+        /etc/confluent/docker/run &
+        sleep infinity
+
   prometheus:
     image: confluentinc/cp-enterprise-prometheus:${CP_PROMETHEUS}
     hostname: cp-enterprise-prometheus
@@ -94,6 +131,7 @@ services:
     depends_on:
       - broker
       - schema-registry
+      - connect
       - prometheus
       - alertmanager
     ports:
@@ -102,6 +140,8 @@ services:
       - ./vol/config:/mnt/config
     environment:
       CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: 'connect:8083'
+      CONTROL_CENTER_CONNECT_HEALTHCHECK_ENDPOINT: '/connectors'
       CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
       CONTROL_CENTER_REPLICATION_FACTOR: 1
       CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
@@ -119,6 +159,7 @@ services:
     depends_on:
       - broker
       - schema-registry
+      - connect
     ports:
       - 8082:8082
     hostname: rest-proxy
@@ -128,6 +169,112 @@ services:
       KAFKA_REST_BOOTSTRAP_SERVERS: 'broker:29092'
       KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
       KAFKA_REST_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+
+  # ---------------------------------------------------------------------------
+  # One-shot: create topics (1 partition each) and register the Avro schemas.
+  # Everything that needs the topics/schemas to exist (Flink, the UI) waits on
+  # this via `condition: service_completed_successfully`.
+  # ---------------------------------------------------------------------------
+  kafka-setup:
+    image: confluentinc/cp-server:${CP_VERSION}
+    hostname: kafka-setup
+    container_name: kafka-setup
+    depends_on:
+      - broker
+      - schema-registry
+    volumes:
+      - ./scripts:/scripts
+      - ./schemas:/schemas
+    entrypoint: ["bash", "/scripts/kafka-bootstrap.sh"]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Flink
+  # ---------------------------------------------------------------------------
+  flink-jobmanager:
+    image: cnfldemos/flink-kafka:${CP_FLINK}
+    hostname: flink-jobmanager
+    container_name: flink-jobmanager
+    depends_on:
+      - broker
+      - schema-registry
+    ports:
+    - 9081:9081
+    command: jobmanager
+    environment:
+    - |
+      FLINK_PROPERTIES=
+      jobmanager.rpc.address: flink-jobmanager
+      rest.bind-port: 9081
+
+  flink-sql-client:
+    image: cnfldemos/flink-sql-client-kafka:${CP_FLINK}
+    depends_on:
+      - flink-jobmanager
+    hostname: flink-sql-client
+    container_name: flink-sql-client
+    environment:
+      FLINK_JOBMANAGER_HOST: flink-jobmanager
+
+  flink-taskmanager:
+    image: cnfldemos/flink-kafka:${CP_FLINK}
+    hostname: flink-taskmanager
+    container_name: flink-taskmanager
+    depends_on:
+    - flink-jobmanager
+    command: taskmanager
+    scale: 1
+    environment:
+    - |
+      FLINK_PROPERTIES=
+      jobmanager.rpc.address: flink-jobmanager
+      taskmanager.numberOfTaskSlots: 10
+
+  flink-sql-bootstrap:
+    image: cnfldemos/flink-sql-client-kafka:${CP_FLINK}
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+      # Don't submit the job until the topics and the crewai-logs schema exist.
+      kafka-setup:
+        condition: service_completed_successfully
+    hostname: flink-sql-bootstrap
+    container_name: flink-sql-bootstrap
+    environment:
+      FLINK_JOBMANAGER_HOST: flink-jobmanager
+    volumes:
+      - ./sql:/sql
+      - ./scripts:/scripts
+    entrypoint: ["bash", "/scripts/flink-bootstrap.sh"]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Elastic / Kibana for agents monitoring
+  # ---------------------------------------------------------------------------
+  elasticsearch:
+    image: elasticsearch:${ELASTIC_VERSION}
+    container_name: elasticsearch
+    restart: always
+    environment:
+      - xpack.security.enabled=false
+      - discovery.type=single-node
+    ports:
+      - 9200:9200
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  kibana:
+    image: kibana:${KIBANA_VERSION}
+    container_name: kibana
+    restart: always
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - 5601:5601
+    depends_on:
+      - elasticsearch
 
   # ---------------------------------------------------------------------------
   # Web search backend for the agents (queried via the MCP server).
@@ -221,8 +368,13 @@ services:
       dockerfile: ui/Dockerfile
     container_name: flask-ui
     depends_on:
-      - broker
-      - schema-registry
+      broker:
+        condition: service_started
+      schema-registry:
+        condition: service_started
+      # Ensures crewai-logs-stats exists before the UI subscribes to it.
+      kafka-setup:
+        condition: service_completed_successfully
     ports:
       - "8088:8088"
     environment:

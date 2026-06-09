@@ -38,6 +38,7 @@ turn it into something more capable.
 - [Using the web UI](#using-the-web-ui)
 - [Stopping it](#stopping-it)
 - [Observability](#observability)
+- [Shift-left: processing the data at the source](#shift-left-processing-the-data-at-the-source)
 - [Extend it](#extend-it)
 - [Repository layout](#repository-layout)
 
@@ -59,6 +60,18 @@ of just one agent, and the larger "team" is assembled across the network by Kafk
 named *topics*; consumers read from those topics independently and at their own
 pace. It is the durable backbone that lets the agents stay decoupled — they don't
 need to be running at the same time or know about one another.
+
+**Apache Flink (stream processing).** A stream processor that reads from Kafka
+topics, transforms records as they arrive, and writes the result back to Kafka —
+continuously, with no batch step. Here, Confluent Platform Flink turns the raw
+agent-activity log into a clean, enriched stream the moment each event is produced
+(see [Shift-left](#shift-left-processing-the-data-at-the-source)).
+
+**Shift-left.** Doing the data work — cleaning, shaping, enriching, governing —
+*close to the source* as data is produced, rather than re-doing it downstream in
+every system that consumes it. This project shifts left with Flink: it computes
+per-call latency and trims the log stream once, in motion, so the UI and the
+Elasticsearch/Kibana dashboard both consume a ready-to-use data product.
 
 **Choreography vs. orchestration.** With orchestration, a central controller
 tells each service what to do and when. With choreography, there is no
@@ -85,6 +98,12 @@ one machine; the same topology would move to Kubernetes and a managed broker
 
 The only control flow is "consume a topic, act, produce to a topic." No agent
 imports or invokes another.
+
+Bolted onto the same topics — without touching the agents — is an observability
+layer: a Flink job refines the agents' activity log in-stream and an Elasticsearch
+sink feeds a Kibana dashboard. Because everything is just another Kafka consumer,
+it adds zero coupling to the agents. See
+[Observability](#observability) and [Shift-left](#shift-left-processing-the-data-at-the-source).
 
 ## The agents
 
@@ -148,15 +167,19 @@ files are in [`schemas/`](schemas/).
 | `crewai-agent-market-research-ready` | `agent_market_research_ready.avsc` | Auditor |
 | `crewai-agent-report-ready` | `agent_report_ready.avsc` | Scribe |
 | `crewai-logs` | `logs.avsc` | every agent (one message per LLM prompt, LLM response, and MCP tool call) |
+| `crewai-logs-stats` | *(registered by Flink)* | the Flink job — a curated mirror of `crewai-logs` (drops the bulky `data` field, adds `latency_ms`); read by the UI and the Elasticsearch sink (see [Shift-left](#shift-left-processing-the-data-at-the-source)) |
 
-`start_demo.sh` creates the topics (one partition each) and registers the schemas
-before any traffic flows, so they appear in Control Center immediately. Producers
-also auto-register their schema on first publish.
+A one-shot `kafka-setup` service creates the topics (one partition each) and
+registers the schemas before any traffic flows, so they appear in Control Center
+immediately; the Flink job and the UI wait for it to finish. Producers also
+auto-register their schema on first publish, and the Flink job owns and registers
+the `crewai-logs-stats-value` schema.
 
 <p align="center">
   <img src="docs/imgs/kafka_topics.png" alt="The project's Kafka topics in Confluent Control Center" width="820" />
   <br/>
-  <em>The five project topics in Confluent Control Center — one partition each (internal topics hidden).</em>
+  <em>The core project topics in Confluent Control Center — one partition each (internal topics hidden).
+  The Flink-derived <code>crewai-logs-stats</code> joins them once a run starts.</em>
 </p>
 
 ## How a request flows through the system
@@ -174,9 +197,14 @@ also auto-register their schema on first publish.
 4. Scribe consumes the validated research and writes the report, publishing
    Markdown to `crewai-agent-report-ready`.
 5. The Flask backend runs background consumers on `crewai-agent-report-ready` and
-   `crewai-logs`. It matches each message to the right user by the Kafka key
+   `crewai-logs-stats`. It matches each message to the right user by the Kafka key
    (the username) and pushes them to the browser over Server-Sent Events, so the
    user sees a live activity feed and then the finished report.
+
+In parallel, a Flink job continuously reads `crewai-logs`, shapes each event into
+the leaner `crewai-logs-stats` stream, and writes it back to Kafka — feeding both
+the UI feed above and the Elasticsearch/Kibana dashboard. See
+[Shift-left](#shift-left-processing-the-data-at-the-source).
 
 <p align="center">
   <img src="docs/imgs/webui_agents_kafka_topics.png" alt="Topic-level message flow between the UI and the three agents" width="840" />
@@ -266,11 +294,15 @@ cp .env_example .env     # then add your AWS credentials (see above)
 ./start_demo.sh
 ```
 
-`start_demo.sh` checks that Docker is running and `.env` exists, builds and starts
-all containers (Confluent Platform, SearXNG, the MCP server, the three agents, and
-the UI), waits for the Schema Registry and Control Center, creates the topics,
-registers the schemas, and prints the service URLs. The first run builds images
-and pulls the Confluent stack, so it takes a few minutes.
+`start_demo.sh` checks that Docker is running and `.env` exists, then builds and
+starts the whole stack: Confluent Platform (broker, Schema Registry, Control
+Center, Connect, **Flink**), **Elasticsearch + Kibana**, SearXNG, the MCP server,
+the three agents, and the UI. The one-shot `kafka-setup` service creates the topics
+and registers the schemas; the Flink job that builds `crewai-logs-stats` is then
+submitted. Finally the script applies the Elasticsearch index template, deploys the
+Elasticsearch sink connector, and imports the Kibana dashboard — then prints the
+service URLs. The first run builds images and pulls the Confluent, Elasticsearch
+and Kibana images, so it takes several minutes.
 
 | Service | URL |
 |---|---|
@@ -278,6 +310,10 @@ and pulls the Confluent stack, so it takes a few minutes.
 | Confluent Control Center | http://localhost:9021 |
 | Schema Registry | http://localhost:8081 |
 | Prometheus | http://localhost:9090 |
+| Kafka Connect (REST) | http://localhost:8083 |
+| Flink Dashboard | http://localhost:9081 |
+| Elasticsearch | http://localhost:9200 |
+| Kibana (AI observability dashboard) | http://localhost:5601/app/dashboards |
 
 ## Using the web UI
 
@@ -297,8 +333,9 @@ and pulls the Confluent stack, so it takes a few minutes.
 3. Click Submit. Use Clear to reset the form.
 4. Watch the Agent activity panel: every LLM prompt and response — and every MCP
    web-search call — from Scout, Auditor, and Scribe streams in live from
-   `crewai-logs`. Each line shows the agent, what it's doing, the call's token
-   count and estimated cost; the header keeps running session token and cost totals.
+   `crewai-logs-stats` (the Flink-curated stream). Each line shows the agent, what
+   it's doing, the call's token count and estimated cost; the header keeps running
+   session token and cost totals.
 5. When the Scribe finishes, the report renders on the right. Use the Download
    button to save it as Markdown.
 
@@ -327,10 +364,13 @@ report is lost. The handling lives in [`common/lifecycle.py`](common/lifecycle.p
 ## Observability
 
 - **In the UI:** the activity feed shows every agent action — LLM prompts and
-  responses *and* MCP tool calls — read from `crewai-logs`, with per-call token
-  counts and an estimated USD cost, plus running session totals in the header.
+  responses *and* MCP tool calls — read from `crewai-logs-stats`, with per-call
+  token counts and an estimated USD cost, plus running session totals in the header.
+- **In Kibana** (http://localhost:5601/app/dashboards): the *CrewAI · AI Agent
+  Observability* dashboard — tokens and cost per agent, LLM/tool call counts, and
+  per-call latency, all from `crewai-logs-stats` (see below).
 - **In Control Center** (http://localhost:9021): topics, message flow, consumer
-  groups, and the registered Avro schemas.
+  groups, the registered Avro schemas, the Flink job, and the Connect cluster.
 - **In the container logs:**
   `docker compose logs -f agent-market-research agent-validator agent-report-creator`.
 
@@ -349,6 +389,88 @@ a model not yet in the map simply shows as `n/a` ([`common/pricing.py`](common/p
   <em>Inspecting <code>crewai-logs</code> in Control Center: each message is one agent action keyed by
   username, with the Avro value (<code>agent_name</code>, <code>report_id</code>, <code>type</code>, <code>tokens</code>,
   <code>cost</code>, <code>model</code>) shown in the message detail.</em>
+</p>
+
+### The Elastic/Kibana observability dashboard
+
+On top of the raw `crewai-logs` topic sits a small observability stack. A Flink
+job turns the raw log into the curated `crewai-logs-stats` stream, and a
+**Confluent Elasticsearch Sink connector** streams that topic straight into
+Elasticsearch, where **Kibana** charts it. The connector is deployed automatically
+by `start_demo.sh` (config in [`connectors/`](connectors/)); nothing is exported by
+hand.
+
+<p align="center">
+  <img src="docs/imgs/confluent_platform_elastic_sink_connector.png" alt="The Elasticsearch sink connector in Confluent Control Center" width="840" />
+  <br/>
+  <em>The <code>elastic-sink-observability</code> connector in Control Center, reading <code>crewai-logs-stats</code>
+  and sinking it to Elasticsearch — no bespoke consumer code.</em>
+</p>
+
+The imported **CrewAI · AI Agent Observability** dashboard (saved object in
+[`kibana_dashboard.ndjson`](kibana_dashboard.ndjson)) answers the questions you
+actually have about an agentic system: how much each agent costs and how many
+tokens it burns, how many LLM and tool calls each one makes, and how long those
+calls take — average and max — per agent and per report.
+
+<p align="center">
+  <img src="docs/imgs/kibana_observability_dashboard_charts_1.png" alt="Kibana dashboard: totals, cost and tokens per agent, calls and latency per agent" width="860" />
+  <br/>
+  <em>Totals (cost in USD, input/output tokens, event count), cost per agent, tokens per agent,
+  LLM/tool calls per agent by type, and average/max latency per call per agent.</em>
+</p>
+
+<p align="center">
+  <img src="docs/imgs/kibana_observability_dashboard_charts_2.png" alt="Kibana dashboard: cost and latency over time, and latency per report" width="860" />
+  <br/>
+  <em>Cost and average latency over time, and a table of max/average latency per <code>report_id</code> and agent.
+  Every panel is driven solely by <code>crewai-logs-stats</code>.</em>
+</p>
+
+## Shift-left: processing the data at the source
+
+The latency on that dashboard is never computed in Elasticsearch, and the bulky
+prompt/response text never reaches it. Both are handled upstream, in the stream
+itself — an example of the [shift-left](https://www.confluent.io/learn/what-is-shift-left/)
+approach to data: do the cleaning, shaping, enrichment and governance *close to
+where the data is produced*, once, instead of re-doing it downstream in every
+system that consumes it.
+
+The classic ("shift-right") pattern would be to dump every raw log into
+Elasticsearch and then transform it there — recomputing latency with a transform
+or scripted field, carrying the heavy `data` payload into the index, and repeating
+that work in any other consumer. That means more storage, redundant compute, slower
+queries, and quality logic scattered across tools.
+
+Here a single **Confluent Platform Flink** job (DDL in [`sql/bootstrap.sql`](sql/bootstrap.sql))
+does the work in motion, the moment each event lands on `crewai-logs`:
+
+- **Trims the payload** — drops the large free-text `data` field that neither the
+  UI nor the dashboard needs.
+- **Enriches** — computes per-call `latency_ms` as the gap between consecutive
+  events for the same `(username, report_id)` (`LAG(...) OVER (...)`), so latency is
+  a first-class field instead of something each consumer has to derive.
+- **Keeps the contract** — writes Avro to `crewai-logs-stats` against the Schema
+  Registry, carrying the username on both the key (for the UI's per-user fan-out)
+  and in the value (for Elasticsearch).
+
+<p align="center">
+  <img src="docs/imgs/flink_shift_left_calculate_latency.png" alt="The Flink job that builds crewai-logs-stats, running in the Flink dashboard" width="840" />
+  <br/>
+  <em>The Flink job: <code>Source: crewai-logs → Calc → OverAggregate → crewai-logs-stats Writer</code>.
+  It strips <code>data</code> and computes <code>latency_ms</code> continuously, in-stream.</em>
+</p>
+
+The result is **one curated data product, built once at the source and reused
+everywhere**: the same `crewai-logs-stats` topic feeds the live UI feed *and* the
+Elasticsearch/Kibana dashboard, with consistent fields, real-time freshness, lower
+downstream cost, and quality enforced by the schema rather than by each consumer.
+
+<p align="center">
+  <img src="docs/imgs/crewai_logs_stats_shift_left.png" alt="The enriched crewai-logs-stats topic with latency_ms in Control Center" width="840" />
+  <br/>
+  <em>The shifted-left <code>crewai-logs-stats</code> stream: <code>data</code> is gone and <code>latency_ms</code> is already
+  present in the Avro value — ready for Elasticsearch with no further processing.</em>
 </p>
 
 ## Extend it
@@ -382,8 +504,11 @@ of the system carries on as before.
 .
 ├── common/                     Shared library (settings, Kafka+Avro, Bedrock LLM, MCP, logging, pricing, lifecycle)
 ├── schemas/                    Avro value schemas, one per topic
+├── sql/bootstrap.sql           Flink DDL: derive crewai-logs-stats from crewai-logs (drop data, add latency_ms)
+├── connectors/                 Elasticsearch sink connector config + ES index template
+├── kibana_dashboard.ndjson     The "CrewAI · AI Agent Observability" Kibana saved objects
 ├── docs/imgs/                  Screenshots and diagrams used in this README
-├── scripts/register_schemas.sh Registers the schemas with the Schema Registry
+├── scripts/                    kafka-bootstrap.sh (topics + schemas), flink-bootstrap.sh (submit job), register_schemas.sh
 ├── mcp_server/                 MCP server exposing a web_search tool over SearXNG
 ├── searxng/settings.yml        SearXNG configuration (JSON API enabled)
 ├── agents/                     One folder per agent (main.py, crew.py, config.yaml, Dockerfile)
@@ -391,7 +516,7 @@ of the system carries on as before.
 │   ├── validator/              Auditor (research → validated, or re-request)
 │   └── report_creator/         Scribe  (validated → report)
 ├── ui/                         Flask + SSE backend, static React (CDN, no build step)
-├── docker-compose.yml          Confluent Platform + SearXNG + MCP + agents + UI
+├── docker-compose.yml          Confluent Platform (broker, SR, C3, Connect, Flink) + Elastic/Kibana + SearXNG + MCP + agents + UI
 ├── start_demo.sh / stop_demo.sh
 ├── .env_example                Copy to .env and add your AWS credentials
 └── samples/                    An example generated report

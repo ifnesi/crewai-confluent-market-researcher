@@ -19,6 +19,9 @@ TOPIC_MARKET_RESEARCH: str = "crewai-agent-market-research"
 TOPIC_RESEARCH_READY: str = "crewai-agent-market-research-ready"
 TOPIC_REPORT_READY: str = "crewai-agent-report-ready"
 TOPIC_LOGS: str = "crewai-logs"
+# Flink-derived, less-verbose mirror of TOPIC_LOGS (drops the heavy `data` field
+# and adds `latency_ms`). The UI and the Elasticsearch sink read from this one.
+TOPIC_LOGS_STATS: str = "crewai-logs-stats"
 
 # --- Web search / MCP --------------------------------------------------------
 SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://searxng:8080")

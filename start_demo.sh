@@ -53,20 +53,43 @@ wait_for() {
 wait_for "Schema Registry" "http://localhost:8081/subjects"
 wait_for "Control Center" "http://localhost:9021/" 60 || true
 
-# --- create topics (1 partition each, as required) ---------------------------
-echo "▶ Creating Kafka topics (1 partition each) ..."
-for t in crewai-ui-request-report crewai-agent-market-research \
-         crewai-agent-market-research-ready crewai-agent-report-ready crewai-logs; do
-  docker compose exec -T broker kafka-topics --bootstrap-server broker:29092 \
-    --create --if-not-exists --topic "$t" --partitions 1 --replication-factor 1 \
-    >/dev/null 2>&1 && echo "  ✓ $t" || echo "  ✗ $t"
-done
+# Topics and Avro schemas are now created by the one-shot `kafka-setup` service
+# (see docker-compose.yml); the Flink job depends on it. Wait for it to finish so
+# the post-startup steps below are safe.
+echo "⏳ Waiting for kafka-setup (topics + schemas) ..."
+docker compose wait kafka-setup >/dev/null 2>&1 || true
 
-# --- register Avro schemas (runs only once the helper exists) ----------------
-if [ -x ./scripts/register_schemas.sh ]; then
-  echo "▶ Registering Avro schemas with Schema Registry ..."
-  ./scripts/register_schemas.sh
-fi
+# --- Elasticsearch: index template (stable field types for the dashboard) ----
+wait_for "Elasticsearch" "http://localhost:9200" 90 || true
+echo "▶ Applying Elasticsearch index template ..."
+curl -fsS -X PUT "http://localhost:9200/_index_template/crewai-logs-stats" \
+  -H 'Content-Type: application/json' \
+  --data @connectors/es-index-template.json >/dev/null \
+  && echo "  ✓ template crewai-logs-stats" || echo "  ✗ template (continuing)"
+
+# --- Kafka Connect: deploy the Elasticsearch sink ----------------------------
+# The connect container installs the Elasticsearch plugin via confluent-hub at
+# startup; wait for it to register before deploying. PUT .../config is idempotent.
+echo "⏳ Waiting for the Elasticsearch connector plugin ..."
+for ((i = 0; i < 90; i++)); do
+  if curl -fsS http://localhost:8083/connector-plugins 2>/dev/null | grep -q ElasticsearchSinkConnector; then
+    break
+  fi
+  sleep 2
+done
+echo "▶ Deploying Elasticsearch sink connector ..."
+curl -fsS -X PUT -H 'Content-Type: application/json' \
+  --data @connectors/elastic_sink_observability.json \
+  http://localhost:8083/connectors/elastic-sink-observability/config >/dev/null \
+  && echo "  ✓ elastic-sink-observability" || echo "  ✗ connector deploy (continuing)"
+
+# --- Kibana: import the observability dashboard ------------------------------
+wait_for "Kibana" "http://localhost:5601/api/status" 120 || true
+echo "▶ Importing Kibana dashboard ..."
+curl -fsS -X POST "http://localhost:5601/api/saved_objects/_import?overwrite=true" \
+  -H "kbn-xsrf: true" \
+  -F file=@kibana_dashboard.ndjson >/dev/null \
+  && echo "  ✓ CrewAI Observability dashboard" || echo "  ✗ dashboard import (continuing)"
 
 cat <<'EOF'
 
@@ -76,6 +99,10 @@ cat <<'EOF'
   Confluent Control Center   : http://localhost:9021
   Schema Registry            : http://localhost:8081
   Prometheus                 : http://localhost:9090
+  Kafka Connect              : http://localhost:8083
+  Flink Dashboard            : http://localhost:9081
+  Elasticsearch              : http://localhost:9200
+  Kibana (AI observability)  : http://localhost:5601/app/dashboards
 
   Agent logs:
     docker compose logs -f agent-market-research agent-validator agent-report-creator

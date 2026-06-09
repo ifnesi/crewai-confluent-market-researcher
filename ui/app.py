@@ -18,6 +18,7 @@ import re
 import threading
 import uuid
 from collections import defaultdict
+from datetime import datetime, timezone
 from queue import Empty, Queue
 
 from flask import (
@@ -57,6 +58,17 @@ FIELDS = ["Technology", "Finance", "HR", "Healthcare", "Retail", "Manufacturing"
 
 
 # --- SSE fan-out -------------------------------------------------------------
+def _json_default(o):
+    """JSON-encode values the stats stream introduces. Avro logical timestamps
+    deserialize to ``datetime``; the frontend expects epoch-ms (``new Date(...)``),
+    so collapse them back to milliseconds."""
+    if isinstance(o, datetime):
+        if o.tzinfo is None:  # local-timestamp-millis comes back naive (UTC)
+            o = o.replace(tzinfo=timezone.utc)
+        return int(o.timestamp() * 1000)
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def _fanout(username: str | None, payload: dict) -> None:
     if not username:
         return
@@ -75,8 +87,10 @@ def _consume(topic: str, group_suffix: str, kind: str) -> None:
 
 
 def _start_background_consumers() -> None:
+    # Read the Flink-derived stats stream (no `data`, with `latency_ms`) rather
+    # than the raw crewai-logs topic — same per-user keying, less payload.
     threading.Thread(
-        target=_consume, args=(settings.TOPIC_LOGS, "logs", "log"), daemon=True
+        target=_consume, args=(settings.TOPIC_LOGS_STATS, "logs", "log"), daemon=True
     ).start()
     threading.Thread(
         target=_consume, args=(settings.TOPIC_REPORT_READY, "report", "report"), daemon=True
@@ -166,7 +180,7 @@ def stream():
             while True:
                 try:
                     payload = q.get(timeout=15)
-                    yield f"data: {json.dumps(payload)}\n\n"
+                    yield f"data: {json.dumps(payload, default=_json_default)}\n\n"
                 except Empty:
                     yield ": keepalive\n\n"
         finally:

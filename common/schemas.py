@@ -31,6 +31,15 @@ def schema_path(topic: str) -> Path:
         raise KeyError(f"No Avro schema registered for topic {topic!r}") from exc
 
 
-def load_schema_str(topic: str) -> str:
-    """Return the raw Avro schema JSON string for a topic's value."""
-    return schema_path(topic).read_text(encoding="utf-8")
+def load_schema_str(topic: str) -> str | None:
+    """Return the raw Avro schema JSON string for a topic's value.
+
+    Returns ``None`` for topics with no local .avsc (e.g. ``crewai-logs-stats``,
+    whose schema is owned and registered by the Flink job). Consumers then
+    deserialize against the writer schema resolved from Schema Registry by id,
+    so no reader schema is needed; producers only ever target mapped topics.
+    """
+    fname = TOPIC_SCHEMA_FILE.get(topic)
+    if fname is None:
+        return None
+    return (SCHEMA_DIR / fname).read_text(encoding="utf-8")

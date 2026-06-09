@@ -7,7 +7,7 @@
     { "name": "report_id", "type": "string", "doc": "UUID correlating all messages for one report." },
     { "name": "field", "type": "string", "doc": "Domain, e.g. finance, technology, HR." },
     { "name": "process", "type": "string", "doc": "Specific process within the field, e.g. procure-to-pay." },
-    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
+    {"name": "timestamp", "type": { "type": "long", "logicalType": "timestamp-millis" } },
     { "name": "extra_context", "type": ["null", "string"], "default": null, "doc": "Validator feedback / additional requirements on a re-request; null on the first pass." },
     { "name": "counter", "type": "int", "default": 0, "doc": "Number of research iterations so far." }
   ]

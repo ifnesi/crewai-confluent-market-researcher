@@ -5,7 +5,7 @@
   "doc": "Validated research, ready for the Scribe to turn into an executive report.",
   "fields": [
     { "name": "report_id", "type": "string" },
-    { "name": "timestamp", "type": "long", "doc": "Epoch milliseconds." },
+    {"name": "timestamp", "type": { "type": "long", "logicalType": "timestamp-millis" } },
     { "name": "field", "type": "string" },
     { "name": "process", "type": "string" },
     { "name": "counter", "type": "int", "doc": "Iteration the validated research came from." },
