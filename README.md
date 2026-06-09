@@ -1,8 +1,6 @@
 <p align="center">
   <a><img src="ui/static/img/crewai_logo.png" alt="CrewAI" height="44" style="background:#ffffff; padding:14px 18px; border-radius:12px;" /></a>
   &nbsp;
-  <a><img src="ui/static/img/apache_kafka_logo.png" alt="Apache Kafka" height="44" style="background:#ffffff; padding:14px 18px; border-radius:12px;" /></a>
-  &nbsp;
   <a><img src="ui/static/img/confluent_logo.png" alt="Confluent" height="40" style="background:#ffffff; padding:16px 18px; border-radius:12px;" /></a>
 </p>
 
