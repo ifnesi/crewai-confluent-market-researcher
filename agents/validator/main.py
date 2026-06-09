@@ -4,8 +4,8 @@ Routing:
   * PASS, or the iteration cap (counter >= MAX_RESEARCH_ITERATIONS) is hit
         -> publish to crewai-agent-market-research-ready
   * otherwise
-        -> re-publish to crewai-ui-request-report with extra_context (the
-           feedback) and counter incremented, so Scout researches again.
+        -> re-publish to crewai-ui-request-report with report_draft (the prior
+           findings) and report_feedback, counter incremented, so Scout revises.
 """
 from __future__ import annotations
 
@@ -91,7 +91,8 @@ def handle(kafka: KafkaAvro, key: str | None, value: dict) -> None:
                 "field": field,
                 "process": process,
                 "timestamp": now_ms(),
-                "extra_context": feedback,
+                "report_draft": findings,
+                "report_feedback": feedback,
                 "counter": counter + 1,
             },
         )

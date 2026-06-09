@@ -154,7 +154,8 @@ def request_report():
             "field": field,
             "process": process,
             "timestamp": now_ms(),
-            "extra_context": None,
+            "report_draft": None,
+            "report_feedback": None,
             "counter": 0,
         },
     )

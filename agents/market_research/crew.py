@@ -17,14 +17,27 @@ _CFG = yaml.safe_load(
 )
 
 
-def build_crew(tools, *, field: str, process: str, extra_context, llm) -> Crew:
+def build_crew(tools, *, field: str, process: str, report_draft, report_feedback, llm) -> Crew:
     agent_cfg, task_cfg = _CFG["agent"], _CFG["task"]
 
     extra = ""
-    if extra_context:
+    if report_draft and report_feedback:
+        # Revision pass: don't start over. Keep the sound parts of the prior
+        # dossier and change only what the feedback calls out — cheaper and steadier.
+        extra = (
+            "\n\nREVISION PASS — a prior version of this dossier was reviewed by the "
+            "validator and sent back. Do NOT start from scratch. Preserve the sections "
+            "and claims that are already sound, and revise ONLY what the feedback calls "
+            "out; run new web searches solely to address that feedback. Return the FULL, "
+            "updated dossier in the same structure.\n\n"
+            f"--- PRIOR DRAFT (revise, don't discard) ---\n{report_draft}\n\n"
+            f"--- VALIDATOR FEEDBACK (address this) ---\n{report_feedback}\n"
+        )
+    elif report_feedback:
+        # Feedback without a draft (shouldn't normally happen) — steer, don't rebuild.
         extra = (
             "\n\nIMPORTANT — a prior pass was sent back by the validator. Address "
-            f"this feedback specifically and fill the gaps:\n{extra_context}\n"
+            f"this feedback specifically and fill the gaps:\n{report_feedback}\n"
         )
 
     analyst = Agent(

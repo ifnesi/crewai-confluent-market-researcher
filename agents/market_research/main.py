@@ -32,7 +32,8 @@ def handle(kafka: KafkaAvro, key: str | None, value: dict) -> None:
     field = value["field"]
     process = value["process"]
     counter = int(value.get("counter", 0) or 0)
-    extra_context = value.get("extra_context")
+    report_draft = value.get("report_draft")
+    report_feedback = value.get("report_feedback")
 
     log.info("research request report_id=%s field=%s process=%s counter=%s",
              report_id, field, process, counter)
@@ -45,7 +46,8 @@ def handle(kafka: KafkaAvro, key: str | None, value: dict) -> None:
             tools,
             field=field,
             process=process,
-            extra_context=extra_context,
+            report_draft=report_draft,
+            report_feedback=report_feedback,
             llm=llm_factory.research_llm(),
         )
         result = crew.kickoff()

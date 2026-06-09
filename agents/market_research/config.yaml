@@ -3,7 +3,7 @@
 # Edit this file to change the agent's persona or instructions; no code change
 # needed. Placeholders {field} {process} {sources} {extra} are filled at runtime
 # by crew.py. ({sources} comes from common/settings.py SUGGESTED_SOURCES;
-# {extra} carries the Auditor's feedback on a re-research pass.)
+# {extra} carries the prior draft + the Auditor's feedback on a revision pass.)
 agent:
   role: "Senior {field} Market Research Analyst"
   goal: >-

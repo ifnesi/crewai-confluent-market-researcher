@@ -122,8 +122,9 @@ writing.
 
 The validation loop is bounded so the system always finishes. Each request
 carries a `counter`. When the Auditor rejects research, it republishes the
-request with its feedback in `extra_context` and `counter + 1`, sending Scout
-back for another pass. The Auditor is tuned to approve workable research on the
+request with the prior findings in `report_draft`, its feedback in
+`report_feedback`, and `counter + 1` — sending Scout back to revise (not redo)
+that draft. The Auditor is tuned to approve workable research on the
 first pass, so the loop is a safety valve rather than the normal path. Once the
 research passes review, or `counter` reaches `MAX_RESEARCH_ITERATIONS` (2), it
 moves on to the Scribe.
@@ -186,14 +187,15 @@ the `crewai-logs-stats-value` schema.
 
 1. A user logs in (username only) and submits a field and a process. The Flask
    backend publishes a request to `crewai-ui-request-report` with `counter = 0`
-   and `extra_context = null`.
+   and `report_draft = report_feedback = null`.
 2. Scout consumes the request, researches the topic with the `web_search` tool
    (backed by SearXNG), and publishes its findings and source URLs to
    `crewai-agent-market-research`.
 3. Auditor consumes the findings and reviews them, re-checking some of the cited
    URLs. If the research holds up — or the iteration cap is reached — it publishes
    to `crewai-agent-market-research-ready`. Otherwise it republishes the request
-   with feedback and an incremented counter, and Scout researches again.
+   with the prior draft, its feedback, and an incremented counter, and Scout
+   revises that draft rather than starting over.
 4. Scribe consumes the validated research and writes the report, publishing
    Markdown to `crewai-agent-report-ready`.
 5. The Flask backend runs background consumers on `crewai-agent-report-ready` and
