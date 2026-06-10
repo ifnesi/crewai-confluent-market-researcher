@@ -89,7 +89,7 @@ SELECT
   `tool_name`,
   `model`,
   `ts_ms` - LAG(`ts_ms`) OVER (
-    PARTITION BY `username`, `report_id`
+    PARTITION BY `username`, `report_id`, `agent_name`
     ORDER BY `proc`
   ) AS `latency_ms`
 FROM `crewai-logs`;
