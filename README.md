@@ -4,19 +4,21 @@
   <a><img src="ui/static/img/confluent_logo.png" alt="Confluent" height="40" style="background:#ffffff; padding:16px 18px; border-radius:12px;" /></a>
 </p>
 
-# CrewAI × Kafka — A Choreographed Deep-Research System
+# CrewAI × Kafka: A Choreographed Deep-Research System
 
-Give this system a field (for example *finance*) and a process (for example
-*procure-to-pay*), and it produces an executive-ready research report on that
-topic. Three AI agents do the work: one researches the web, one validates the
-findings, and one writes the report.
+**This demo shows how to build a distributed, event-driven AI agent system using
+CrewAI and Apache Kafka.** Give it a field (for example *finance*) and a process
+(for example *procure-to-pay*), and it produces an executive-ready research
+report on that topic. Three **stateless** AI agents do the work: one researches
+the web, one validates the findings, and one writes the report.
 
 The interesting part is how they cooperate. The agents never call each other.
 Each one runs in its own Docker container and communicates only by reading and
-writing messages on Apache Kafka topics. There is no central orchestrator
-deciding what runs when — the workflow emerges from what each agent does when a
-message lands on the topic it listens to. The result is a small but complete
-distributed system that runs on a laptop.
+writing messages on Apache Kafka topics. **The agents are completely stateless**, they
+hold no memory between requests; all state lives in Kafka messages. There is no
+central orchestrator deciding what runs when, the workflow emerges from what each
+agent does when a message lands on the topic it listens to. The result is a small
+but complete distributed system that runs on a laptop.
 
 This repository is meant as a learning example: a clear, hackable demonstration
 of how CrewAI agents and Apache Kafka combine into an event-driven pipeline. It
@@ -45,8 +47,8 @@ turn it into something more capable.
 If some of these terms are new, here is the short version.
 
 **Agentic AI.** An *agent* is a large language model given a role, a goal, and a
-set of tools. Instead of answering a single prompt, it works in a loop — reason,
-take an action with a tool, observe the result, repeat — until the task is done.
+set of tools. Instead of answering a single prompt, it works in a loop, reason,
+take an action with a tool, observe the result, repeat, until the task is done.
 The agents here use a web-search tool to gather evidence before they write.
 
 **CrewAI.** An open-source Python framework for building agents and grouping them
@@ -56,16 +58,16 @@ of just one agent, and the larger "team" is assembled across the network by Kafk
 
 **Apache Kafka.** A distributed, append-only log. Producers publish messages to
 named *topics*; consumers read from those topics independently and at their own
-pace. It is the durable backbone that lets the agents stay decoupled — they don't
+pace. It is the durable backbone that lets the agents stay decoupled, they don't
 need to be running at the same time or know about one another.
 
 **Apache Flink (stream processing).** A stream processor that reads from Kafka
-topics, transforms records as they arrive, and writes the result back to Kafka —
+topics, transforms records as they arrive, and writes the result back to Kafka, 
 continuously, with no batch step. Here, Confluent Platform Flink turns the raw
 agent-activity log into a clean, enriched stream the moment each event is produced
 (see [Shift-left](#shift-left-processing-the-data-at-the-source)).
 
-**Shift-left.** Doing the data work — cleaning, shaping, enriching, governing —
+**Shift-left.** Doing the data work, cleaning, shaping, enriching, governing, 
 *close to the source* as data is produced, rather than re-doing it downstream in
 every system that consumes it. This project shifts left with Flink: it computes
 per-call latency and trims the log stream once, in motion, so the UI and the
@@ -73,8 +75,8 @@ Elasticsearch/Kibana dashboard both consume a ready-to-use data product.
 
 **Choreography vs. orchestration.** With orchestration, a central controller
 tells each service what to do and when. With choreography, there is no
-controller: each service follows one local rule — "when I see message X, do my
-job and emit message Y" — and the overall behaviour emerges from those rules.
+controller: each service follows one local rule, "when I see message X, do my
+job and emit message Y", and the overall behaviour emerges from those rules.
 This system is pure choreography. Adding or removing an agent is just adding or
 removing a consumer on a topic; nothing central has to change.
 
@@ -90,14 +92,14 @@ one machine; the same topology would move to Kubernetes and a managed broker
   <img src="docs/imgs/comms_diagram_via_kafka.png" alt="High-level components communicating through Kafka" width="820" />
   <br/>
   <em>High-level view: the React/Flask UI and the three CrewAI agents (Scout, Auditor, Scribe)
-  are fully decoupled — they exchange nothing directly, only messages on Confluent/Kafka topics.
+  are fully decoupled, they exchange nothing directly, only messages on Confluent/Kafka topics.
   All three agents reach the live web through the MCP server's <code>web_search</code> tool, backed by SearXNG.</em>
 </p>
 
 The only control flow is "consume a topic, act, produce to a topic." No agent
 imports or invokes another.
 
-Bolted onto the same topics — without touching the agents — is an observability
+Bolted onto the same topics, without touching the agents, is an observability
 layer: a Flink job refines the agents' activity log in-stream and an Elasticsearch
 sink feeds a Kibana dashboard. Because everything is just another Kafka consumer,
 it adds zero coupling to the agents. See
@@ -110,7 +112,7 @@ Each agent is a single-agent CrewAI crew running in its own container. The names
 
 | Container | Name | Role | Consumes | Produces |
 |---|---|---|---|---|
-| `agent-market-research` | Scout | Researches the field/process on the web — latest improvements, how leaders innovate, new entrants, where VCs invest — and records source URLs | `crewai-ui-request-report` | `crewai-agent-market-research` |
+| `agent-market-research` | Scout | Researches the field/process on the web, latest improvements, how leaders innovate, new entrants, where VCs invest, and records source URLs | `crewai-ui-request-report` | `crewai-agent-market-research` |
 | `agent-validator` | Auditor | Checks the research for coverage, coherence, evidence and specificity, re-checking cited URLs. Approves it or sends it back for another pass | `crewai-agent-market-research` | `crewai-agent-market-research-ready`, or `crewai-ui-request-report` to re-request |
 | `agent-report-creator` | Scribe | Writes the executive report in Markdown from validated research | `crewai-agent-market-research-ready` | `crewai-agent-report-ready` |
 
@@ -121,7 +123,7 @@ writing.
 The validation loop is bounded so the system always finishes. Each request
 carries a `counter`. When the Auditor rejects research, it republishes the
 request with the prior findings in `report_draft`, its feedback in
-`report_feedback`, and `counter + 1` — sending Scout back to revise (not redo)
+`report_feedback`, and `counter + 1`, sending Scout back to revise (not redo)
 that draft. The Auditor is tuned to approve workable research on the
 first pass, so the loop is a safety valve rather than the normal path. Once the
 research passes review, or `counter` reaches `MAX_RESEARCH_ITERATIONS` (2), it
@@ -130,13 +132,13 @@ moves on to the Scribe.
 ## Configuring the agents and the system
 
 **Agent personas and prompts live in YAML, not in code.** Each agent reads a
-`config.yaml` next to its source, so you can retune an agent — its role, goal,
+`config.yaml` next to its source, so you can retune an agent, its role, goal,
 backstory, task instructions, expected output, and iteration/time caps (and, for
-the Auditor, the exact verdict tokens it must emit) — without touching Python:
+the Auditor, the exact verdict tokens it must emit), without touching Python:
 
-- [`agents/market_research/config.yaml`](agents/market_research/config.yaml) — Scout
-- [`agents/validator/config.yaml`](agents/validator/config.yaml) — Auditor
-- [`agents/report_creator/config.yaml`](agents/report_creator/config.yaml) — Scribe
+- [`agents/market_research/config.yaml`](agents/market_research/config.yaml): Scout
+- [`agents/validator/config.yaml`](agents/validator/config.yaml): Auditor
+- [`agents/report_creator/config.yaml`](agents/report_creator/config.yaml): Scribe
 
 Where the YAML has `{placeholders}`, `crew.py` fills them at runtime: `{field}`
 and `{process}` from the request, the `{findings}`/`{references}` passed between
@@ -166,7 +168,7 @@ files are in [`schemas/`](schemas/).
 | `crewai-agent-market-research-ready` | `agent_market_research_ready.avsc` | Auditor |
 | `crewai-agent-report-ready` | `agent_report_ready.avsc` | Scribe |
 | `crewai-logs` | `logs.avsc` | every agent (one message per LLM prompt, LLM response, and MCP tool call) |
-| `crewai-logs-stats` | *(registered by Flink)* | the Flink job — a curated mirror of `crewai-logs` (drops the bulky `data` field, adds `latency_ms`); read by the UI and the Elasticsearch sink (see [Shift-left](#shift-left-processing-the-data-at-the-source)) |
+| `crewai-logs-stats` | *(registered by Flink)* | the Flink job, a curated mirror of `crewai-logs` (drops the bulky `data` field, adds `latency_ms`); read by the UI and the Elasticsearch sink (see [Shift-left](#shift-left-processing-the-data-at-the-source)) |
 
 A one-shot `kafka-setup` service creates the topics (one partition each) and
 registers the schemas before any traffic flows, so they appear in Control Center
@@ -177,7 +179,7 @@ the `crewai-logs-stats-value` schema.
 <p align="center">
   <img src="docs/imgs/kafka_topics.png" alt="The project's Kafka topics in Confluent Control Center" width="820" />
   <br/>
-  <em>The core project topics in Confluent Control Center — one partition each (internal topics hidden).
+  <em>The core project topics in Confluent Control Center, one partition each (internal topics hidden).
   The Flink-derived <code>crewai-logs-stats</code> joins them once a run starts.</em>
 </p>
 
@@ -190,7 +192,7 @@ the `crewai-logs-stats-value` schema.
    (backed by SearXNG), and publishes its findings and source URLs to
    `crewai-agent-market-research`.
 3. Auditor consumes the findings and reviews them, re-checking some of the cited
-   URLs. If the research holds up — or the iteration cap is reached — it publishes
+   URLs. If the research holds up, or the iteration cap is reached, it publishes
    to `crewai-agent-market-research-ready`. Otherwise it republishes the request
    with the prior draft, its feedback, and an incremented counter, and Scout
    revises that draft rather than starting over.
@@ -202,7 +204,7 @@ the `crewai-logs-stats-value` schema.
    user sees a live activity feed and then the finished report.
 
 In parallel, a Flink job continuously reads `crewai-logs`, shapes each event into
-the leaner `crewai-logs-stats` stream, and writes it back to Kafka — feeding both
+the leaner `crewai-logs-stats` stream, and writes it back to Kafka, feeding both
 the UI feed above and the Elasticsearch/Kibana dashboard. See
 [Shift-left](#shift-left-processing-the-data-at-the-source).
 
@@ -212,14 +214,14 @@ the UI feed above and the Elasticsearch/Kibana dashboard. See
   <em>The same flow at the topic level. Solid arrows are produces (blue) and consumes (orange) between
   agents and topics; the dashed lines are the bounded re-research loop (Auditor → <code>crewai-ui-request-report</code>)
   and every agent streaming its activity to <code>crewai-logs</code>, which the UI tails for the live feed.
-  No agent calls another — each only reads one topic and writes another.</em>
+  No agent calls another, each only reads one topic and writes another.</em>
 </p>
 
 ## Which LLMs it uses, and why
 
 The agents run on Anthropic's Claude models hosted on Amazon Bedrock. CrewAI 1.x
 talks to Bedrock through its native provider (boto3); the LiteLLM runtime is not
-involved (only its public price map is read, for cost estimates — see
+involved (only its public price map is read, for cost estimates, see
 [Observability](#observability)). The model is chosen per agent to match the work
 and balance cost against quality.
 
@@ -300,7 +302,7 @@ Center, Connect, **Flink**), **Elasticsearch + Kibana**, SearXNG, the MCP server
 the three agents, and the UI. The one-shot `kafka-setup` service creates the topics
 and registers the schemas; the Flink job that builds `crewai-logs-stats` is then
 submitted. Finally the script applies the Elasticsearch index template, deploys the
-Elasticsearch sink connector, and imports the Kibana dashboard — then prints the
+Elasticsearch sink connector, and imports the Kibana dashboard, then prints the
 service URLs. The first run builds images and pulls the Confluent, Elasticsearch
 and Kibana images, so it takes several minutes.
 
@@ -331,15 +333,15 @@ and Kibana images, so it takes several minutes.
    Submit stays disabled until a field is selected and the process has at least a
    few characters.
 3. Click Submit. Use Clear to reset the form.
-4. Watch the Agent activity panel: every LLM prompt and response — and every MCP
-   web-search call — from Scout, Auditor, and Scribe streams in live from
+4. Watch the Agent activity panel: every LLM prompt and response, and every MCP
+   web-search call, from Scout, Auditor, and Scribe streams in live from
    `crewai-logs-stats` (the Flink-curated stream). Each line shows the agent, what
    it's doing, the call's token count and estimated cost; the header keeps running
    session token and cost totals.
 5. When the Scribe finishes, the report renders on the right. Use the Download
    button to save it as Markdown.
 
-A full run takes a few minutes — it includes real web research, validation, a
+A full run takes a few minutes, it includes real web research, validation, a
 possible re-research loop, and writing.
 
 <p align="center">
@@ -357,17 +359,17 @@ possible re-research loop, and writing.
 ```
 
 Stopping sends each container SIGTERM. The agents and the UI catch it and shut down
-gracefully — they stop their Kafka consumers cleanly (committing offsets, leaving the
+gracefully, they stop their Kafka consumers cleanly (committing offsets, leaving the
 group) and flush any pending producer messages before exiting, so no in-flight log or
 report is lost. The handling lives in [`common/lifecycle.py`](common/lifecycle.py).
 
 ## Observability
 
-- **In the UI:** the activity feed shows every agent action — LLM prompts and
-  responses *and* MCP tool calls — read from `crewai-logs-stats`, with per-call
+- **In the UI:** the activity feed shows every agent action, LLM prompts and
+  responses *and* MCP tool calls, read from `crewai-logs-stats`, with per-call
   token counts and an estimated USD cost, plus running session totals in the header.
 - **In Kibana** (http://localhost:5601/app/dashboards): the *CrewAI · AI Agent
-  Observability* dashboard — tokens and cost per agent, LLM/tool call counts, and
+  Observability* dashboard, tokens and cost per agent, LLM/tool call counts, and
   per-call latency, all from `crewai-logs-stats` (see below).
 - **In Control Center** (http://localhost:9021): topics, message flow, consumer
   groups, the registered Avro schemas, the Flink job, and the Connect cluster.
@@ -380,7 +382,7 @@ The log feed is produced by a listener on CrewAI's event bus
 arguments, result), and publishes each to `crewai-logs`, tagged with the agent
 name, `report_id`, and username. Token counts come from the provider's actual
 usage rather than an estimate. The USD cost is derived from LiteLLM's maintained
-public price map — the same one CrewAI references — so no prices are hardcoded;
+public price map, the same one CrewAI references, so no prices are hardcoded;
 a model not yet in the map simply shows as `n/a` ([`common/pricing.py`](common/pricing.py)).
 
 <p align="center">
@@ -404,14 +406,14 @@ hand.
   <img src="docs/imgs/confluent_platform_elastic_sink_connector.png" alt="The Elasticsearch sink connector in Confluent Control Center" width="840" />
   <br/>
   <em>The <code>elastic-sink-observability</code> connector in Control Center, reading <code>crewai-logs-stats</code>
-  and sinking it to Elasticsearch — no bespoke consumer code.</em>
+  and sinking it to Elasticsearch, no bespoke consumer code.</em>
 </p>
 
 The imported **CrewAI · AI Agent Observability** dashboard (saved object in
 [`kibana_dashboard.ndjson`](kibana_dashboard.ndjson)) answers the questions you
 actually have about an agentic system: how much each agent costs and how many
 tokens it burns, how many LLM and tool calls each one makes, and how long those
-calls take — average and max — per agent and per report.
+calls take, average and max, per agent and per report.
 
 <p align="center">
   <img src="docs/imgs/kibana_observability_dashboard_charts_1.png" alt="Kibana dashboard: totals, cost and tokens per agent, calls and latency per agent" width="860" />
@@ -431,13 +433,13 @@ calls take — average and max — per agent and per report.
 
 The latency on that dashboard is never computed in Elasticsearch, and the bulky
 prompt/response text never reaches it. Both are handled upstream, in the stream
-itself — an example of the [shift-left](https://www.confluent.io/learn/what-is-shift-left/)
+itself, an example of the [shift-left](https://www.confluent.io/learn/what-is-shift-left/)
 approach to data: do the cleaning, shaping, enrichment and governance *close to
 where the data is produced*, once, instead of re-doing it downstream in every
 system that consumes it.
 
 The classic ("shift-right") pattern would be to dump every raw log into
-Elasticsearch and then transform it there — recomputing latency with a transform
+Elasticsearch and then transform it there, recomputing latency with a transform
 or scripted field, carrying the heavy `data` payload into the index, and repeating
 that work in any other consumer. That means more storage, redundant compute, slower
 queries, and quality logic scattered across tools.
@@ -445,12 +447,12 @@ queries, and quality logic scattered across tools.
 Here a single **Confluent Platform Flink** job (DDL in [`sql/bootstrap.sql`](sql/bootstrap.sql))
 does the work in motion, the moment each event lands on `crewai-logs`:
 
-- **Trims the payload** — drops the large free-text `data` field that neither the
+- **Trims the payload**: drops the large free-text `data` field that neither the
   UI nor the dashboard needs.
-- **Enriches** — computes per-call `latency_ms` as the gap between consecutive
+- **Enriches**: computes per-call `latency_ms` as the gap between consecutive
   events for the same `(username, report_id)` (`LAG(...) OVER (...)`), so latency is
   a first-class field instead of something each consumer has to derive.
-- **Keeps the contract** — writes Avro to `crewai-logs-stats` against the Schema
+- **Keeps the contract**: writes Avro to `crewai-logs-stats` against the Schema
   Registry, carrying the username on both the key (for the UI's per-user fan-out)
   and in the value (for Elasticsearch).
 
@@ -470,14 +472,14 @@ downstream cost, and quality enforced by the schema rather than by each consumer
   <img src="docs/imgs/crewai_logs_stats_shift_left.png" alt="The enriched crewai-logs-stats topic with latency_ms in Control Center" width="840" />
   <br/>
   <em>The shifted-left <code>crewai-logs-stats</code> stream: <code>data</code> is gone and <code>latency_ms</code> is already
-  present in the Avro value — ready for Elasticsearch with no further processing.</em>
+  present in the Avro value, ready for Elasticsearch with no further processing.</em>
 </p>
 
 ## Extend it
 
 This is a deliberately small example: enough to show the pattern, not a production
 system. That is also what makes it a good starting point. Because there is no
-orchestrator, adding a capability means adding one more Kafka consumer — nothing
+orchestrator, adding a capability means adding one more Kafka consumer, nothing
 central has to be rewired. If you want to go further, try building one of these.
 Each is roughly a weekend-sized project.
 
@@ -512,7 +514,7 @@ of the system carries on as before.
 ├── mcp_server/                 MCP server exposing a web_search tool over SearXNG
 ├── searxng/settings.yml        SearXNG configuration (JSON API enabled)
 ├── agents/                     One folder per agent (main.py, crew.py, config.yaml, Dockerfile)
-│   ├── market_research/        Scout   (request → research)   — persona in config.yaml
+│   ├── market_research/        Scout   (request → research) persona in config.yaml
 │   ├── validator/              Auditor (research → validated, or re-request)
 │   └── report_creator/         Scribe  (validated → report)
 ├── ui/                         Flask + SSE backend, static React (CDN, no build step)
