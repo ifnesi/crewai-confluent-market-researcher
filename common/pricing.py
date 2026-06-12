@@ -5,9 +5,9 @@ installed and ``litellm.cost_per_token`` isn't available. We instead fetch the
 *same* price JSON CrewAI references (``crewai.constants.JSON_URL``) once, cache it
 for the process lifetime, and look the model up ourselves.
 
-No prices are hardcoded here — the map is maintained upstream. Cost is simply
-``None`` when the map can't be fetched (offline) or the model isn't in it; tokens
-remain accurate regardless.
+No prices are hardcoded here — the map is maintained upstream. Cost is ``0.0``
+when the map can't be fetched (offline) or the model isn't in it (e.g. free
+local Ollama models); tokens remain accurate regardless.
 """
 from __future__ import annotations
 
@@ -70,13 +70,14 @@ def _candidates(model: str) -> list[str]:
     return out
 
 
-def cost(model: str, prompt_tokens: int | None, completion_tokens: int | None) -> float | None:
-    """USD cost for a call, or None if not derivable from the price map."""
+def cost(model: str, prompt_tokens: int | None, completion_tokens: int | None) -> float:
+    """USD cost for a call, or 0.0 if not derivable from the price map
+    (offline, brand-new model, or a free local model such as Ollama)."""
     if not prompt_tokens and not completion_tokens:
-        return None
+        return 0.0
     prices = _load()
     if not prices:
-        return None
+        return 0.0
     for cand in _candidates(model):
         entry = prices.get(cand)
         if not isinstance(entry, dict):
@@ -87,4 +88,4 @@ def cost(model: str, prompt_tokens: int | None, completion_tokens: int | None) -
             continue
         total = (prompt_tokens or 0) * (in_rate or 0) + (completion_tokens or 0) * (out_rate or 0)
         return round(total, 8)
-    return None
+    return 0.0

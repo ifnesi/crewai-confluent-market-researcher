@@ -111,7 +111,11 @@ def healthz():
 # --- session -----------------------------------------------------------------
 @app.get("/api/session")
 def get_session():
-    return jsonify(username=session.get("username"), fields=FIELDS)
+    return jsonify(
+        username=session.get("username"),
+        fields=FIELDS,
+        llm_provider=settings.LLM_PROVIDER,
+    )
 
 
 @app.post("/api/login")

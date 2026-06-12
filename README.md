@@ -33,6 +33,8 @@ turn it into something more capable.
 - [Kafka topics and schemas](#kafka-topics-and-schemas)
 - [How a request flows through the system](#how-a-request-flows-through-the-system)
 - [Which LLMs it uses, and why](#which-llms-it-uses-and-why)
+- [Choosing a provider: Ollama or AWS Bedrock](#choosing-a-provider-ollama-or-aws-bedrock)
+- [Ollama setup (default)](#ollama-setup-default)
 - [AWS Bedrock setup](#aws-bedrock-setup)
 - [Running it](#running-it)
 - [Using the web UI](#using-the-web-ui)
@@ -147,8 +149,9 @@ agents, and `{extra}` (the Auditor's feedback on a re-research pass).
 **System-wide settings live in [`common/settings.py`](common/settings.py).** This
 is the single place that defines the knobs shared by every service: the Kafka
 topic names, the service endpoints (broker, Schema Registry, MCP server, SearXNG)
-with container-friendly defaults, the per-agent Bedrock model defaults
-(`BEDROCK_MODEL_*`), the validation-loop cap (`MAX_RESEARCH_ITERATIONS`), and the
+with container-friendly defaults, the LLM provider switch (`LLM_PROVIDER`) and the
+per-agent model defaults for each provider (`OLLAMA_MODEL_*` / `BEDROCK_MODEL_*`),
+the validation-loop cap (`MAX_RESEARCH_ITERATIONS`), and the
 list of suggested sources injected into Scout's prompt. If you want to point at a
 different broker, swap a model, or rename a topic, this is the file to read first.
 Most values can also be overridden by an environment variable set in `.env` or
@@ -219,44 +222,122 @@ the UI feed above and the Elasticsearch/Kibana dashboard. See
 
 ## Which LLMs it uses, and why
 
-The agents run on Anthropic's Claude models hosted on Amazon Bedrock. CrewAI 1.x
-talks to Bedrock through its native provider (boto3); the LiteLLM runtime is not
-involved (only its public price map is read, for cost estimates, see
-[Observability](#observability)). The model is chosen per agent to match the work
-and balance cost against quality.
+The system runs on **one LLM provider for all three agents**, chosen with
+`LLM_PROVIDER`. Two are supported out of the box:
 
-| Agent | Default model | Reasoning |
-|---|---|---|
-| Scout (research) | Claude Sonnet 4.6 | Research is a long loop of many search calls and synthesis. Sonnet gives a strong balance of speed and capability without paying Opus rates on every step. |
-| Auditor (validation) | Claude Sonnet 4.6 | Validation is focused reasoning over a bounded input. Sonnet judges coverage and re-checks URLs reliably. Swap to Haiku if cost matters more than thoroughness. |
-| Scribe (report) | Claude Opus 4.8 | The report is the graded deliverable, judged on clarity and structure. Opus writes the best long-form prose, and it runs only once per report. |
+- **`OLLAMA` (default):** local models served by [Ollama](https://ollama.com).
+  The whole demo, agents *and* LLM, runs on your machine with no cloud account
+  and no per-token cost. This is the default in `.env_example`.
+- **`AWS`:** Anthropic's Claude models on Amazon Bedrock, for higher-quality
+  output (especially the executive report).
+
+CrewAI runs on LiteLLM, so the provider is encoded entirely in the model string
+(`ollama/<model>` or `bedrock/<model>`); [`common/llm.py`](common/llm.py)
+switches on `LLM_PROVIDER` and is the single place model construction lives. (For
+Bedrock, CrewAI 1.x uses its native boto3 provider; LiteLLM's public price map is
+still read for cost estimates, see [Observability](#observability).)
+
+The model is chosen per agent to match the work and balance cost against quality:
+
+| Agent | Default (Ollama) | Default (AWS Bedrock) | Reasoning |
+|---|---|---|---|
+| Scout (research) | `gemma4:e4b` | Claude Sonnet 4.6 | Research is a long loop of many search calls and synthesis, a strong balance of speed and capability without paying top-tier rates on every step. |
+| Auditor (validation) | `gemma4:e4b` | Claude Sonnet 4.6 | Validation is focused reasoning over a bounded input: judge coverage and re-check URLs reliably. |
+| Scribe (report) | `gemma4:e4b` | Claude Opus 4.8 | The report is the graded deliverable, judged on clarity and structure. On Bedrock, Opus writes the best long-form prose; it runs only once per report. |
 
 Each model is set by an environment variable, with defaults in
 [`common/settings.py`](common/settings.py). Override them in `.env` or
-`docker-compose.yml` to match what your account has enabled:
+`docker-compose.yml`:
 
 ```
+# LLM_PROVIDER=OLLAMA
+OLLAMA_MODEL_RESEARCH    (agent-market-research)
+OLLAMA_MODEL_VALIDATOR   (agent-validator)
+OLLAMA_MODEL_REPORT      (agent-report-creator)
+
+# LLM_PROVIDER=AWS
 BEDROCK_MODEL_RESEARCH   (agent-market-research)
 BEDROCK_MODEL_VALIDATOR  (agent-validator)
 BEDROCK_MODEL_REPORT     (agent-report-creator)
 ```
 
+> **A note on quality.** A 4B local model is great for a zero-cost, fully local
+> demo, but its reports are noticeably shorter and less polished than Bedrock
+> Opus. For the best output, use `LLM_PROVIDER=AWS`, or point a single agent at a
+> larger local model (for example `OLLAMA_MODEL_REPORT=gemma4:26b` if your machine
+> has the memory).
+
+## Choosing a provider: Ollama or AWS Bedrock
+
+Set `LLM_PROVIDER` in `.env`:
+
+| | `OLLAMA` (default) | `AWS` |
+|---|---|---|
+| Where the LLM runs | Your machine, via Ollama | Amazon Bedrock (`eu-west-1`) |
+| Cost | Free (cost shows as `0`) | Per-token Bedrock pricing |
+| Needs a cloud account | No | Yes (Bedrock model access + IAM) |
+| Output quality | Good (small local model) | Best (Sonnet/Opus) |
+| Extra prerequisite | Ollama + a pulled model | AWS credentials |
+
+The everything-in-Docker path is `OLLAMA`; a mix of Docker (infra + agents) and
+cloud (LLM) is `AWS`. Follow the matching setup section below, then jump to
+[Running it](#running-it).
+
+## Ollama setup (default)
+
+With `LLM_PROVIDER=OLLAMA` the agents call a local Ollama server, so there is no
+cloud account and no per-token cost.
+
+1. **Install Ollama** from [ollama.com](https://ollama.com/download) (or
+   `brew install ollama` on macOS) and make sure it is running:
+   ```bash
+   ollama --version
+   ollama serve            # if it isn't already running as a service
+   ```
+
+2. **Pull the model** the agents default to:
+   ```bash
+   ollama pull gemma4:e4b
+   ```
+   `gemma4:e4b` is ~9.6 GB on disk and, importantly, supports **tool calling**,
+   which the agents need for the `web_search` MCP tool. If you change
+   `OLLAMA_MODEL_*` to another model, pick one with the `tools` capability.
+
+3. **How the containers reach Ollama.** The agents run in Docker but Ollama runs
+   on the host. The default `OLLAMA_BASE_URL=http://host.docker.internal:11434`
+   resolves to the host from inside Docker Desktop (macOS/Windows), so the
+   containers reuse your host-pulled, GPU-accelerated models, no second copy, no
+   CPU-only container. On **Linux**, `host.docker.internal` is not automatic: add
+   ```yaml
+   extra_hosts:
+     - "host.docker.internal:host-gateway"
+   ```
+   to the three `agent-*` services in `docker-compose.yml`, or point
+   `OLLAMA_BASE_URL` at a containerized/remote Ollama.
+
+That's all `OLLAMA` mode needs, no `.env` credentials. Continue to
+[Running it](#running-it).
+
 ## AWS Bedrock setup
 
-The agents call Claude on Amazon Bedrock in the `eu-west-1` region.
+*Only needed when `LLM_PROVIDER=AWS`.* The agents call Claude on Amazon Bedrock in
+the `eu-west-1` region.
 
-1. **Provide credentials.** Copy the template and fill in your keys:
+1. **Select the provider and provide credentials.** Copy the template and fill in
+   your keys:
    ```bash
    cp .env_example .env
    ```
    Then set these in `.env`:
    ```
+   export LLM_PROVIDER="AWS"
    export AWS_ACCESS_KEY_ID="..."
    export AWS_SECRET_ACCESS_KEY="..."
    export AWS_REGION_NAME="eu-west-1"
    ```
    `.env` is git-ignored; `.env_example` is the committed template and also holds
-   the Confluent Platform image versions (`CP_*`).
+   the Confluent Platform image versions (`CP_*`). It ships with
+   `LLM_PROVIDER="OLLAMA"`, so switch it to `"AWS"` to use Bedrock.
 
 2. **Enable model access.** In the AWS console, open Bedrock → Model access in
    `eu-west-1` and enable the Claude models you plan to use (Sonnet and Opus).
@@ -288,11 +369,22 @@ aws bedrock list-foundation-models --by-provider Anthropic --region eu-west-1 \
 
 ## Running it
 
-Prerequisites: Docker Desktop with Compose v2, an AWS account with Bedrock Claude
-access in `eu-west-1`, and roughly 8 GB of free RAM for the Confluent stack.
+Prerequisites:
+
+- **Docker Desktop** with Compose v2.
+- **~8 GB free RAM** for the Confluent + Elastic stack (the agents themselves are
+  light).
+- **An LLM provider**, one of:
+  - **Ollama (default):** Ollama installed and running, with `gemma4:e4b` pulled
+    (see [Ollama setup](#ollama-setup-default)). Budget **~10 GB of additional
+    RAM** for the model on top of the 8 GB above, so a **16 GB machine is a
+    practical floor and 32 GB is comfortable**; a GPU (Apple-Silicon Metal or
+    NVIDIA on Linux) makes it far faster but is not required.
+  - **AWS Bedrock:** an AWS account with Claude model access in `eu-west-1` (see
+    [AWS Bedrock setup](#aws-bedrock-setup)). No extra local RAM needed.
 
 ```bash
-cp .env_example .env     # then add your AWS credentials (see above)
+cp .env_example .env     # default LLM_PROVIDER=OLLAMA; set AWS + creds for Bedrock
 ./start_demo.sh
 ```
 
@@ -383,7 +475,8 @@ arguments, result), and publishes each to `crewai-logs`, tagged with the agent
 name, `report_id`, and username. Token counts come from the provider's actual
 usage rather than an estimate. The USD cost is derived from LiteLLM's maintained
 public price map, the same one CrewAI references, so no prices are hardcoded;
-a model not yet in the map simply shows as `n/a` ([`common/pricing.py`](common/pricing.py)).
+a model not in the map, including free local Ollama models, shows as `0`
+([`common/pricing.py`](common/pricing.py)).
 
 <p align="center">
   <img src="docs/imgs/kafka_topic_crewai-logs.png" alt="Inspecting the crewai-logs topic in Control Center" width="840" />
@@ -504,7 +597,7 @@ of the system carries on as before.
 
 ```
 .
-├── common/                     Shared library (settings, Kafka+Avro, Bedrock LLM, MCP, logging, pricing, lifecycle)
+├── common/                     Shared library (settings, Kafka+Avro, LLM factory [Ollama/Bedrock], MCP, logging, pricing, lifecycle)
 ├── schemas/                    Avro value schemas, one per topic
 ├── sql/bootstrap.sql           Flink DDL: derive crewai-logs-stats from crewai-logs (drop data, add latency_ms)
 ├── connectors/                 Elasticsearch sink connector config + ES index template
@@ -520,6 +613,6 @@ of the system carries on as before.
 ├── ui/                         Flask + SSE backend, static React (CDN, no build step)
 ├── docker-compose.yml          Confluent Platform (broker, SR, C3, Connect, Flink) + Elastic/Kibana + SearXNG + MCP + agents + UI
 ├── start_demo.sh / stop_demo.sh
-├── .env_example                Copy to .env and add your AWS credentials
+├── .env_example                Copy to .env; pick LLM_PROVIDER (OLLAMA default / AWS) and add AWS creds if using Bedrock
 └── samples/                    An example generated report
 ```

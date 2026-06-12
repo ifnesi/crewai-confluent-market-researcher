@@ -74,7 +74,6 @@
       const { useState, useEffect, useRef, useCallback } = React;
       const LOGOS = [
         { src: "/static/img/crewai_logo.png", alt: "CrewAI" },
-        { src: "/static/img/apache_kafka_logo.png", alt: "Apache Kafka" },
         { src: "/static/img/confluent_logo.png", alt: "Confluent" },
       ];
       const MIN_CHARS = 5;
@@ -190,6 +189,7 @@
         const [tokOut, setTokOut] = useState(0);
         const [cost, setCost] = useState(0);
         const [hasCost, setHasCost] = useState(false);
+        const [provider, setProvider] = useState("");
         const reportIdRef = useRef(null);
         const logsEndRef = useRef(null);
 
@@ -197,6 +197,7 @@
           fetch("/api/session").then((r) => r.json()).then((d) => {
             setUsername(d.username);
             setFields(d.fields || []);
+            setProvider(d.llm_provider || "");
           });
         }, []);
 
@@ -274,6 +275,13 @@
               </div>
               <div className="flex items-center gap-3">
                 <div className="hidden sm:flex items-center gap-2 text-xs" title="Tokens used this session">
+                  {provider && (
+                    <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1"
+                      title="LLM provider serving the agents this session">
+                      <span className="text-slate-500">LLM</span>{" "}
+                      <b className="text-amber-300">{provider === "OLLAMA" ? "Ollama" : provider === "AWS" ? "AWS Bedrock" : provider}</b>
+                    </span>
+                  )}
                   <span className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
                     <b className="text-cyan-300">{(tokIn + tokOut).toLocaleString()}</b>{" "}
                     <span className="text-slate-500">tokens</span>

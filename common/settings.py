@@ -27,6 +27,21 @@ TOPIC_LOGS_STATS: str = "crewai-logs-stats"
 SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://searxng:8080")
 MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
 
+# --- LLM provider selection --------------------------------------------------
+# One provider for all three agents. "AWS" -> Bedrock (default, unchanged
+# behaviour); "OLLAMA" -> a local/remote Ollama server via LiteLLM.
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "AWS").upper()
+
+# --- Ollama (consumed by LiteLLM when LLM_PROVIDER=OLLAMA) --------------------
+# Default targets the *host* Ollama from inside Docker Desktop (Mac/Windows),
+# so the agent containers reuse host-pulled, GPU-accelerated models. On Linux
+# add `extra_hosts: ["host.docker.internal:host-gateway"]` to the services, or
+# override this to a container/remote Ollama URL.
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+OLLAMA_MODEL_RESEARCH: str = os.getenv("OLLAMA_MODEL_RESEARCH", "gemma4:e4b")
+OLLAMA_MODEL_VALIDATOR: str = os.getenv("OLLAMA_MODEL_VALIDATOR", "gemma4:e4b")
+OLLAMA_MODEL_REPORT: str = os.getenv("OLLAMA_MODEL_REPORT", "gemma4:e4b")
+
 # --- AWS Bedrock (consumed by LiteLLM / boto3) -------------------------------
 # LiteLLM reads AWS_REGION_NAME; boto3 prefers AWS_DEFAULT_REGION. Mirror them.
 AWS_REGION_NAME: str = os.getenv("AWS_REGION_NAME", "eu-west-1")

@@ -10,7 +10,8 @@ tool (MCP web_search) invocation.
 Tokens come from the provider's real usage on the completed event — no character
 estimate. Cost is derived from LiteLLM's maintained price map
 (``litellm.cost_per_token``); we never hardcode a per-model price table, and the
-cost is simply ``null`` when a (brand-new) model id isn't in the map yet.
+cost is ``0`` when a (brand-new) model id isn't in the map yet, or for free
+local models such as Ollama.
 
 Per-message context (which agent, which report_id, which username) travels via a
 ContextVar the agent sets right before invoking its crew. CrewAI runs the crew
@@ -85,7 +86,7 @@ def _emit(
         "data": clip(data),
         "tokens": tokens,            # completion tokens (output records)
         "prompt_tokens": prompt_tokens,  # real input tokens (output records)
-        "cost": cost,               # USD from LiteLLM's price map, or null
+        "cost": cost,               # USD from LiteLLM's price map; 0 if unmapped/free
         "tool_name": tool_name,     # e.g. "web_search" (tool records)
         "model": model,
     }
